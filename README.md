@@ -4,4 +4,4 @@ This repository contains the code we used for the manuscript, submitted to the J
 No data was added as it is not intended to be shared.
 
 
-![Methodology followed in the work]("./figures/workflow.png")
+![Methodology followed in the work](./figures/workflow.png)
