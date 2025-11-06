@@ -1,0 +1,2705 @@
+---
+title: "Factor Analysis with Cognitive Age Delta Correcting for Years of Education"
+author: "Iñigo Tellaetxe Elorriaga"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+knit: (
+  function(inputFile, encoding) { 
+    rmarkdown::render('plots_yoe_corrected.Rmd',
+      output_file = './Factor_Analysis_CAD_yoe_corrected_features.html')
+      })
+---
+
+
+```{r}
+# Clear workspace
+rm(list = ls(all.names = TRUE))
+
+# Load libraries
+library(ggplot2); library(dplyr); library(sjPlot);library(metafor); library(ggpubr); library(tools); library(readxl); library(purrr); library(ggstatsplot)
+
+# Load functions
+source('./regression_analysis.R')
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+theme_set(theme_bw())
+
+graph_th <- theme(
+      text = element_text(family = "Times New Roman", size = 12),
+      axis.text = element_text(family = "Times New Roman", size = 12),
+      axis.title = element_text(family = "Times New Roman", size = 12),
+      strip.text = element_text(family = "Times New Roman", size = 8),
+      plot.margin = unit(c(0.2, 0.2, 0.2, 0.2), "cm"),
+      axis.title.y = element_text(margin = margin(r = 2, unit = "mm")),
+      axis.title.x = element_text(margin = margin(t = 2, unit = "mm"))
+    )
+```
+
+
+```{r}
+deltas_path <- './apoe_amyloid_neg_csf/minimal_features_yoe_corrected/ageml/model_age/predicted_age.csv'
+
+# Load deltas
+deltas <- read.csv(deltas_path) %>%
+  rename(delta = delta_all)
+
+# Load diagnosis
+diagnosis <- read_excel("../data/Excel/FIS2021_PGA1_CLASIFICACIÓN_PATOLOGÍA_VACULAR_411PGA1_corregido.xlsx")
+
+# Load csf data from old excel (the one without updated vascular definition)
+csf_data <- read_excel("../data/Excel/FIS2021_PGA1_DXSyndr_CSFAD_Vascular_IÑIGO_15.09.2025.xlsx")[c("cmp_code", "P1_SIGCSF_AB42X_lab106", "P1_SIGCSF_TAUXXX_lab106", "P1_SIGCSF_PTAUXX_lab106")]
+
+# Load features with sub id
+features_path <- paste("../data/Excel/preprocessed_data", "/supernormals_amyloid_neg_csf/cognitive_features_minimal_with_sub_id.csv", sep="")
+features <- read.csv(features_path, stringsAsFactors=F, colClasses="character")
+features$X <- as.integer(features$X)
+
+# From this dataframe select only the unnamed column "X" and the "cmp_code"
+features <- features[c("X", "cmp_code")]
+
+# Now join the features dataframe with the deltas by their common column "X"
+deltas <- deltas %>%
+  merge(features, by="X") %>%
+  merge(diagnosis, by="cmp_code") %>%
+  merge(csf_data, by="cmp_code")
+
+# Save in a different variable for later use
+deltas_everyone <- deltas
+```
+
+```{r}
+# Get the cmp_codes for each clinical_group.
+cmp_codes_cu <- deltas[deltas$LCR == 1 &
+                         deltas$EXCL_PATHOL_LCR == 0 &
+                         deltas$EXCL_PATOL_VASC_CORREGIDO == 0 &
+                         deltas$EXCLU_MCI == 0, "cmp_code"]
+
+cmp_codes_cu_a_pos_vasc_neg <- deltas[deltas$LCR == 1 &
+                                        deltas$EXCL_PATHOL_LCR == 1 &
+                                        deltas$EXCL_PATOL_VASC_CORREGIDO == 0 &
+                                        deltas$EXCLU_MCI == 0, "cmp_code"]
+
+cmp_codes_cu_a_neg_vasc_pos <- deltas[deltas$LCR == 1 &
+                                        deltas$EXCL_PATHOL_LCR == 0 &
+                                        deltas$EXCL_PATOL_VASC_CORREGIDO == 1 &
+                                        deltas$EXCLU_MCI == 0, "cmp_code"]
+
+# From the deltas dataframe, take the rows that have the columns LCR=1, DX_SYNDR_COGIMP_PGA1=0, EXCL_PATHOL_LCR=0, EXCL_PATOL_VASC_CORREGIDO=0
+deltas_cu_a_neg_vasc_neg <- deltas %>%
+  filter(LCR == 1, DX_SYNDR_COGIMP_PGA1 == 0, EXCL_PATHOL_LCR == 0, EXCL_PATOL_VASC_CORREGIDO == 0)
+
+deltas_cu_a_pos_vasc_neg <- deltas %>%
+  filter(LCR==1, DX_SYNDR_COGIMP_PGA1==0, EXCL_PATHOL_LCR==1, EXCL_PATOL_VASC_CORREGIDO==0)
+
+deltas_cu_a_neg_vasc_pos <- deltas %>%
+  filter(LCR==1, DX_SYNDR_COGIMP_PGA1==0, EXCL_PATHOL_LCR==0, EXCL_PATOL_VASC_CORREGIDO==1)
+```
+
+
+# Compare the deltas of the three groups
+```{r}
+# Combine the three dataframes into one, adding a new column "group" to each dataframe
+deltas_cu_a_neg_vasc_neg$group <- "CU A- V-"
+deltas_cu_a_pos_vasc_neg$group <- "CU A+ V-"
+deltas_cu_a_neg_vasc_pos$group <- "CU A- V+"
+# Combine the three dataframes
+deltas_combined <- rbind(deltas_cu_a_neg_vasc_neg,
+                         deltas_cu_a_pos_vasc_neg,
+                         deltas_cu_a_neg_vasc_pos)
+# Make a boxplot comparing the deltas of the three groups
+p <- ggplot(deltas_combined, aes(x = group, y = delta, fill = group)) +
+  geom_boxplot() +
+  labs(title = "Cognitive Age Delta by Group", x = "Group", y = "Cognitive Age Delta") +
+  graph_th +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("CU A- V-" = "lightblue",
+                               "CU A+ V-" = "lightgreen",
+                               "CU A- V+" = "tomato")) +
+  # Add p-value from t-test
+  stat_compare_means(method = "kruskal.test", label = "p.format", label.y = max(deltas_combined$delta) + 1)
+
+print(p)
+```
+
+```{r}
+# Graph theme for having all letters in times new roman
+times_theme <- theme(
+  text = element_text(family="Times New Roman", size=10, color="black")
+)
+```
+
+
+```{r}
+plt <- ggbetweenstats(
+  data = deltas_combined,
+  x = group,
+  y = delta
+)
+print(plt)
+ggsave(
+  filename="../paper/plots/cad_by_group_yoe_corrected.svg",
+  plot=plt,
+  device="svg",
+  dpi=600
+) + times_theme
+```
+
+
+```{r}
+# Load the covars data
+covars_path <- "../data/Excel/preprocessed_data/supernormals_amyloid_neg_csf/covars/apoe4_load_sex_educ_years.csv"
+covars <- read.csv(covars_path, stringsAsFactors=F, colClasses="character") 
+# Drop the X column in the covars variable
+covars <- subset(covars, select=-X)
+
+# Convert covariates to appropriate types
+covars_std <- covars %>%
+  mutate(
+    sex = ifelse(sex == "Female", 1, 0),
+    educ_years = as.numeric(educ_years),
+    educ_years_std = scale(as.numeric(educ_years))[,1],
+    P1_APOE4_load_std = scale(as.numeric(P1_APOE4_load))[,1]
+  )
+
+# Merge deltas with covars by cmp_code
+data <- merge(deltas, covars_std, by="cmp_code")
+```
+
+## DEMOGRAPHICS
+
+```{r}
+data_explore <- merge(deltas_combined, covars_std, by="cmp_code")
+data_explore$P1_APOE4_load <- as.numeric(data_explore$P1_APOE4_load)
+sex_table <- table(data.frame(
+  "sex" = data_explore$sex,
+  "group" = data_explore$group
+))
+print(chisq.test(sex_table))
+
+print(kruskal.test(educ_years ~ group, data = data_explore))
+
+print(kruskal.test(age ~ group, data = data_explore))
+
+print(kruskal.test(P1_APOE4_load ~ group, data = data_explore))
+```
+
+```{r}
+# Which group has more APOE4 load?
+pairwise.wilcox.test(as.numeric(data_explore$P1_APOE4_load),
+                     data_explore$group, p.adjust.method = "fdr")
+```
+
+```{r}
+# Demographics mean and standard deviation, or counts
+data_explore$apoe4_carrier <- ifelse(data_explore$P1_APOE4_load > 0, 1, 0)
+data_explore %>%
+  filter(group == "CU A- V-") %>%
+  summarise(
+    n = n(),
+    age_mean = mean(age),
+    age_sd = sd(age),
+    educ_years_mean = mean(educ_years),
+    educ_years_sd = sd(educ_years),
+    sex_f = sum(sex == 1),
+    sex_m = sum(sex == 0),
+    apoe4_carriers = sum(apoe4_carrier == 1)
+  )
+
+data_explore %>%
+  filter(group == "CU A+ V-") %>%
+  summarise(
+    n = n(),
+    age_mean = mean(age),
+    age_sd = sd(age),
+    educ_years_mean = mean(educ_years),
+    educ_years_sd = sd(educ_years),
+    sex_f = sum(sex == 1),
+    sex_m = sum(sex == 0),
+    apoe4_carriers = sum(apoe4_carrier == 1)
+  )
+
+data_explore %>%
+  filter(group == "CU A- V+") %>%
+  summarise(
+    n = n(),
+    age_mean = mean(age),
+    age_sd = sd(age),
+    educ_years_mean = mean(educ_years),
+    educ_years_sd = sd(educ_years),
+    sex_f = sum(sex == 1),
+    sex_m = sum(sex == 0),
+    apoe4_carriers = sum(apoe4_carrier == 1)
+  )
+```
+
+
+
+
+# Factor analysis
+```{r}
+factors_root <- "../data/Excel/preprocessed_data/supernormals_amyloid_neg_csf/factors/"
+
+# Make a growing set of the variables of the factors
+vars_list = list("cmp_code", "sex", "delta", "educ_years",
+                 "educ_years_std", "P1_APOE4_load_std")
+
+# Load the neurological history factor
+neuro_history <- read.csv(paste(factors_root, "neurological_history.csv", sep=""))
+vars_list <- append(vars_list, names(neuro_history))
+
+# Load the motor scales
+motor_scales <- read.csv(paste(factors_root, "motor_scales.csv", sep=""))
+vars_list <- append(vars_list, names(motor_scales))
+
+# Load the sleep variables
+sleep_vars <- read.csv(paste(factors_root, "sleep.csv", sep=""))
+vars_list <- append(vars_list, names(sleep_vars))
+
+# Load the cardiovascular history
+cardio_history <- read.csv(paste(factors_root, "cardiovascular_history.csv", sep=""))
+vars_list <- append(vars_list, names(cardio_history))
+
+# Load the mfe_adcs_adl
+mfe_adcs_adl <- read.csv(paste(factors_root, "mfe_adcs_adl.csv", sep=""))
+vars_list <- append(vars_list, names(mfe_adcs_adl))
+
+# Load the neurobehavioral symptoms
+neurobehavioral_symptoms <- read.csv(paste(factors_root, "neurobehavioral_symptoms.csv", sep=""))
+vars_list <- append(vars_list, names(neurobehavioral_symptoms))
+
+# Load the vascular_parameters
+vascular_parameters <- read.csv(paste(factors_root, "vascular_parameters.csv", sep=""))
+vars_list <- append(vars_list, names(vascular_parameters))
+
+# Load the cognitive reserve parameters
+cog_reserv <- read.csv(paste(factors_root, "cognitive_reserve.csv", sep=""))
+vars_list <- append(vars_list, names(cog_reserv))
+
+# Load the ipaq_sitting
+ipaq_sitting <- read.csv(paste(factors_root, "ipaq_sitting.csv", sep=""))
+vars_list <- append(vars_list, names(ipaq_sitting))
+
+# Load the alcohol
+alcohol <- read.csv(paste(factors_root, "alcohol.csv", sep=""))
+vars_list <- append(vars_list, names(alcohol))
+
+# Tobacco
+tobacco <- read.csv(paste(factors_root, "tobacco.csv", sep=""))
+vars_list <- append(vars_list, names(tobacco))
+
+# Diet
+diet <- read.csv(paste(factors_root, "diet.csv", sep=""))
+vars_list <- append(vars_list, names(diet))
+
+# Biochemistry
+biochemistry <- read.csv(paste(factors_root, "biochemistry.csv", sep=""))
+vars_list <- append(vars_list, names(biochemistry))
+
+# Antropometry
+antropometry <- read.csv(paste(factors_root, "antropometry.csv", sep=""))
+vars_list <- append(vars_list, names(antropometry))
+
+vars_list <- unique(unlist(vars_list))
+
+# Merge with data by X
+df_list = list(data, neuro_history, motor_scales, sleep_vars,
+               cardio_history, mfe_adcs_adl, neurobehavioral_symptoms,
+               vascular_parameters,
+               cog_reserv, ipaq_sitting,
+               alcohol, tobacco, diet, biochemistry, antropometry)
+factor_data <- Reduce(function(x, y) merge(x, y, by="X", all.x=TRUE), df_list)
+
+# Select the variables of interest in vars_list
+factor_data <- factor_data[, unlist(vars_list)]
+```
+
+```{r}
+factor_data_cu <- factor_data[factor_data$cmp_code %in% cmp_codes_cu, ]
+factor_data_cu_a_pos_vasc_neg <- factor_data[factor_data$cmp_code %in% cmp_codes_cu_a_pos_vasc_neg, ]
+factor_data_cu_a_neg_vasc_pos <- factor_data[factor_data$cmp_code %in% cmp_codes_cu_a_neg_vasc_pos, ]
+```
+
+Let's check if the Cognitive Age Delta is associated with the Education Years, because we tried to remove the effect of this variable in the features that were used to compute the CADs. The associations now should be weaker (smaller correlations and thus smaller effect size). Now, years of educations should in principle not be the variable that explains most variance 
+
+```{r}
+# Let's plot it too. Include annotations for the correlation coefficient and p-value
+# CU (reference group)
+cor_test <- cor.test(factor_data_cu$delta, factor_data_cu$educ_years, method="pearson")
+rho <- cor_test$estimate
+p_value <- cor_test$p.value
+p_educ_years <- ggplot(factor_data_cu, aes(x=educ_years, y=delta)) +
+  geom_point() +
+  geom_smooth(method='lm', color='blue') +
+  labs(title='Cognitive Age Delta vs Education Years (CU A- V-)',
+       x='Education Years',
+       y='Cognitive Age Delta') +
+  annotate("text", x=20, y=9, label=sprintf("rho=%.3f\np=%.3f", rho, p_value), size=5) +
+  graph_th
+print(p_educ_years)
+
+# CU A+ V- group
+cor_test <- cor.test(factor_data_cu_a_pos_vasc_neg$delta, factor_data_cu_a_pos_vasc_neg$educ_years, method="pearson")
+rho <- cor_test$estimate
+p_value <- cor_test$p.value
+
+p_educ_years <- ggplot(factor_data_cu_a_pos_vasc_neg, aes(x=educ_years, y=delta)) +
+  geom_point() +
+  geom_smooth(method='lm', color='blue') +
+  labs(title='Cognitive Age Delta vs Education Years (CU A+ V-)',
+       x='Education Years',
+       y='Cognitive Age Delta') +
+  annotate("text", x=15, y=5, label=sprintf("rho=%.3f\np=%.3f", rho, p_value), size=5) +
+  graph_th
+print(p_educ_years)
+
+# CU A- V+ group
+cor_test <- cor.test(factor_data_cu_a_neg_vasc_pos$delta, factor_data_cu_a_neg_vasc_pos$educ_years, method="pearson")
+rho <- cor_test$estimate
+p_value <- cor_test$p.value
+p_educ_years <- ggplot(factor_data_cu_a_neg_vasc_pos, aes(x=educ_years, y=delta)) +
+  geom_point() +
+  geom_smooth(method='lm', color='blue') +
+  labs(title='Cognitive Age Delta vs Education Years (CU A- V+)',
+       x='Education Years',
+       y='Cognitive Age Delta') +
+  annotate("text", x=15, y=5, label=sprintf("rho=%.3f\np=%.3f",rho, p_value), size=5) +
+  graph_th
+print(p_educ_years)
+```
+
+(Do not be fooled, these relations are NOT significant!!!)
+
+
+We should check how informative sex, APOE4 load, and education years are of CAD all together, independent of each group.
+
+What happens when we check the covariate effects by group? We know that education years has an effect, but what about sex and APOE4 load?
+
+### Covariate effects in CAD, in CU A- V- participants
+```{r}
+model_covars <- glm(delta ~ educ_years_std + sex + P1_APOE4_load_std,
+                    data=factor_data_cu, family=gaussian())
+print(summary(model_covars))
+```
+### Covariate effects in CAD, in CU A+ V- participants
+```{r}
+model_covars <- glm(delta ~ educ_years_std + sex + P1_APOE4_load_std,
+                    data=factor_data_cu_a_pos_vasc_neg, family=gaussian())
+print(summary(model_covars))
+```
+### Covariate effects in CAD, in CU A- V+ participants
+```{r}
+model_covars <- glm(delta ~ educ_years_std + sex + P1_APOE4_load_std,
+                    data=factor_data_cu_a_neg_vasc_pos, family=gaussian())
+print(summary(model_covars))
+```
+
+No associations of CAD with education years controling for sex and APOE4 load.
+
+
+## Motor Scales
+
+### CU A- V-
+```{r}
+data_motor <- factor_data_cu[,c("delta", "TINETTI_EQUILIBRIO", "TINETTI_MARCHA",
+                                "UPDRS_PUNTUACIONTOTAL")]
+
+# Scale the predictors (keep sex unscaled, it is 0 or 1)
+data_motor$TINETTI_MARCHA_std <- scale(data_motor$TINETTI_MARCHA)[,1]
+data_motor$TINETTI_EQUILIBRIO_std <- scale(data_motor$TINETTI_EQUILIBRIO)[,1]
+data_motor$UPDRS_PUNTUACIONTOTAL_std <- scale(data_motor$UPDRS_PUNTUACIONTOTAL)[,1]
+
+delta_tinetti_balance <- glm(delta ~ TINETTI_EQUILIBRIO_std,
+                             data=data_motor, family=gaussian())
+delta_tinetti_gait <- glm(delta ~ TINETTI_MARCHA_std,
+                             data=data_motor, family=gaussian())
+delta_updrs <- glm(delta ~ UPDRS_PUNTUACIONTOTAL_std,
+                             data=data_motor, family=gaussian())
+
+print(summary(delta_tinetti_balance))
+print(summary(delta_tinetti_gait))
+print(summary(delta_updrs))
+
+### Plot Coefficients
+plot_motor_cu <- plot_models(delta_tinetti_balance,
+                            delta_tinetti_gait,
+                            delta_updrs,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "UPDRS Total Score",
+              "Tinetti Gait",
+              "Tinetti Balance"
+                          ),
+            title="Motor Scale Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_motor_cu)
+```
+No associations below statistical significance, thus, we do not correct for covariates.
+
+### CU A+ V-
+```{r}
+data_motor <- factor_data_cu_a_pos_vasc_neg[,c("delta", "TINETTI_EQUILIBRIO", "TINETTI_MARCHA",
+                                "UPDRS_PUNTUACIONTOTAL")]
+
+# Scale the predictors (keep sex unscaled, it is 0 or 1)
+data_motor$TINETTI_MARCHA_std <- scale(data_motor$TINETTI_MARCHA)[,1]
+data_motor$TINETTI_EQUILIBRIO_std <- scale(data_motor$TINETTI_EQUILIBRIO)[,1]
+data_motor$UPDRS_PUNTUACIONTOTAL_std <- scale(data_motor$UPDRS_PUNTUACIONTOTAL)[,1]
+
+delta_tinetti_balance <- glm(delta ~ TINETTI_EQUILIBRIO_std,
+                             data=data_motor, family=gaussian())
+delta_tinetti_gait <- glm(delta ~ TINETTI_MARCHA_std,
+                             data=data_motor, family=gaussian())
+delta_updrs <- glm(delta ~ UPDRS_PUNTUACIONTOTAL_std,
+                             data=data_motor, family=gaussian())
+
+print(summary(delta_tinetti_balance))
+print(summary(delta_tinetti_gait))
+print(summary(delta_updrs))
+
+### Plot Coefficients
+plot_motor_cu_a_pos <- plot_models(delta_tinetti_balance,
+                            delta_tinetti_gait,
+                            delta_updrs,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "UPDRS Total Score",
+              "Tinetti Gait",
+              "Tinetti Balance"
+                          ),
+            title="Motor Scale Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_motor_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+data_motor <- factor_data_cu_a_neg_vasc_pos[,c("delta", "TINETTI_EQUILIBRIO", "TINETTI_MARCHA",
+                                "UPDRS_PUNTUACIONTOTAL")]
+
+# Scale the predictors (keep sex unscaled, it is 0 or 1)
+data_motor$TINETTI_MARCHA_std <- scale(data_motor$TINETTI_MARCHA)[,1]
+data_motor$TINETTI_EQUILIBRIO_std <- scale(data_motor$TINETTI_EQUILIBRIO)[,1]
+data_motor$UPDRS_PUNTUACIONTOTAL_std <- scale(data_motor$UPDRS_PUNTUACIONTOTAL)[,1]
+
+delta_tinetti_balance <- glm(delta ~ TINETTI_EQUILIBRIO,
+                             data=data_motor, family=gaussian())
+delta_tinetti_gait <- glm(delta ~ TINETTI_MARCHA,
+                          data=data_motor, family=gaussian())
+delta_updrs <- glm(delta ~ UPDRS_PUNTUACIONTOTAL_std,
+                   data=data_motor, family=gaussian())
+
+print(summary(delta_tinetti_balance))
+print(summary(delta_tinetti_gait))
+print(summary(delta_updrs))
+
+### Plot Coefficients
+plot_motor_cu_v_pos <- plot_models(
+                            # delta_tinetti_balance,
+                            # delta_tinetti_gait,
+                            delta_updrs,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "UPDRS Total Score"
+              # "Tinetti Gait",
+              # "Tinetti Balance"
+                          ),
+            title="Motor Scale Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_motor_cu_v_pos)
+```
+No associations below statistical significance, thus, we do not correct for covariates.
+
+```{r}
+ggsave("../paper/plots/forest_plots/motor_cu.svg",
+       plot=plot_motor_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/motor_cu_a_pos.svg",
+       plot=plot_motor_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/motor_cu_v_pos.svg",
+       plot=plot_motor_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeaway
+No significant associations found.
+
+
+## Neurological History
+
+### CU A- V-
+```{r}
+delta_neuro_history <- factor_data_cu[,c("delta", "NEUROL_PRSNCE_Neu13", 
+                                         "CVADIS_PRSNCE_Neu13", "TRBINJ_PRSNCE_Neu13")]
+
+delta_neurol_prsnce <- glm(delta ~ NEUROL_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+delta_cvadis_prsnce <- glm(delta ~ CVADIS_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+delta_trbinj_prsnce <- glm(delta ~ TRBINJ_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+
+print(summary(delta_neurol_prsnce))
+print(summary(delta_cvadis_prsnce))
+print(summary(delta_trbinj_prsnce))
+
+### Plot Coefficients
+plot_neurohist_cu <- plot_models(delta_neurol_prsnce,
+                            # delta_cvadis_prsnce,
+                            delta_trbinj_prsnce,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "TBI Presence",
+              # "Cerebrovascular Disease Presence",
+              "Neurological Disease Presence"
+                          ),
+            title="Neurological History Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_neurohist_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_neuro_history <- factor_data_cu_a_pos_vasc_neg[,c("delta", "NEUROL_PRSNCE_Neu13", 
+                                         "CVADIS_PRSNCE_Neu13", "TRBINJ_PRSNCE_Neu13")]
+
+delta_neurol_prsnce <- glm(delta ~ NEUROL_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+delta_cvadis_prsnce <- glm(delta ~ CVADIS_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+delta_trbinj_prsnce <- glm(delta ~ TRBINJ_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+
+print(summary(delta_neurol_prsnce))
+print(summary(delta_cvadis_prsnce))
+print(summary(delta_trbinj_prsnce))
+
+### Plot Coefficients
+plot_neurohist_cu_a_pos <- plot_models(delta_neurol_prsnce,
+                            delta_cvadis_prsnce,
+                            delta_trbinj_prsnce,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "TBI Presence",
+              "Cerebrovascular Disease Presence",
+              "Neurological Disease Presence"
+                          ),
+            title="Neurological History Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_neurohist_cu_a_pos)
+```
+### CU A+ V- correcting for sex, education years, and APOE4 load
+```{r}
+delta_neuro_history <- factor_data_cu_a_pos_vasc_neg[,c("delta", "NEUROL_PRSNCE_Neu13", 
+                                         "CVADIS_PRSNCE_Neu13", "TRBINJ_PRSNCE_Neu13",
+                                         "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_neurol_prsnce <- glm(delta ~ NEUROL_PRSNCE_Neu13 + sex + educ_years_std + P1_APOE4_load_std, data=delta_neuro_history, family=gaussian())
+delta_cvadis_prsnce <- glm(delta ~ CVADIS_PRSNCE_Neu13 + sex + educ_years_std + P1_APOE4_load_std, data=delta_neuro_history, family=gaussian())
+delta_trbinj_prsnce <- glm(delta ~ TRBINJ_PRSNCE_Neu13 + sex + educ_years_std + P1_APOE4_load_std, data=delta_neuro_history, family=gaussian())
+
+print(summary(delta_neurol_prsnce))
+print(summary(delta_cvadis_prsnce))
+print(summary(delta_trbinj_prsnce))
+
+p <- c(summary(delta_neurol_prsnce)$coefficients[2, 4],
+       summary(delta_cvadis_prsnce)$coefficients[2, 4],
+       summary(delta_trbinj_prsnce)$coefficients[2, 4])
+print(p.adjust(p, "fdr") < 0.05) 
+
+### Plot Coefficients
+plot_neurohist_cu_a_pos <- plot_models(delta_neurol_prsnce,
+                            delta_cvadis_prsnce,
+                            delta_trbinj_prsnce,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "TBI Presence",
+              "Cerebrovascular Disease Presence",
+              "Neurological Disease Presence"
+                          ),
+            title="Neurological History Factors (CU A+), covariate corrected"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_neurohist_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_neuro_history <- factor_data_cu_a_neg_vasc_pos[,c("delta", "NEUROL_PRSNCE_Neu13", 
+                                         "CVADIS_PRSNCE_Neu13", "TRBINJ_PRSNCE_Neu13")]
+
+delta_neurol_prsnce <- glm(delta ~ NEUROL_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+delta_cvadis_prsnce <- glm(delta ~ CVADIS_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+delta_trbinj_prsnce <- glm(delta ~ TRBINJ_PRSNCE_Neu13, data=delta_neuro_history, family=gaussian())
+
+print(summary(delta_neurol_prsnce))
+print(summary(delta_cvadis_prsnce))
+print(summary(delta_trbinj_prsnce))
+
+### Plot Coefficients
+plot_neurohist_cu_v_pos <- plot_models(delta_neurol_prsnce,
+                            delta_cvadis_prsnce,
+                            delta_trbinj_prsnce,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "TBI Presence",
+              "Cerebrovascular Disease Presence",
+              "Neurological Disease Presence"
+                          ),
+            title="Neurological History Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_neurohist_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/neurohist_cu.svg",
+       plot=plot_neurohist_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/neurohist_cu_a_pos.svg",
+       plot=plot_neurohist_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/neurohist_cu_v_pos.svg",
+       plot=plot_neurohist_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+### Takeaway
+No significant associations found.
+
+## Sleep Variables
+
+### CU A- V-
+```{r}
+delta_sleep <- factor_data_cu[,c("delta", "PSQITT_C1TTLS_Nut901",
+                                 "PSQITT_C5TTLS_Nut901", "PSQITT_PSQITT_Nut901",
+                                 "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_sleep$PSQITT_C1TTLS_Nut901 <- scale(delta_sleep$PSQITT_C1TTLS_Nut901)[,1]
+delta_sleep$PSQITT_C5TTLS_Nut901 <- scale(delta_sleep$PSQITT_C5TTLS_Nut901)[,1]
+delta_sleep$PSQITT_PSQITT_Nut901 <- scale(delta_sleep$PSQITT_PSQITT_Nut901)[,1]
+
+delta_PSQITT_C1TTLS_Nut901 <- glm(delta ~ PSQITT_C1TTLS_Nut901, data=delta_sleep, family=gaussian())
+delta_PSQITT_C5TTLS_Nut901 <- glm(delta ~ PSQITT_C5TTLS_Nut901, data=delta_sleep, family=gaussian())
+delta_PSQITT_PSQITT_Nut901 <- glm(delta ~ PSQITT_PSQITT_Nut901, data=delta_sleep, family=gaussian())
+
+print(summary(delta_PSQITT_C1TTLS_Nut901))
+print(summary(delta_PSQITT_C5TTLS_Nut901))
+print(summary(delta_PSQITT_PSQITT_Nut901))
+
+### Plot Coefficients
+plot_sleep_cu <- plot_models(delta_PSQITT_C1TTLS_Nut901,
+                            delta_PSQITT_C5TTLS_Nut901,
+                            delta_PSQITT_PSQITT_Nut901,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "PSQI Total",
+              "Sleep Efficiency",
+              "Duration of Sleep"
+                          ),
+            title="Pittsburg Sleep Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_sleep_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_sleep <- factor_data_cu_a_pos_vasc_neg[,c("delta", "PSQITT_C1TTLS_Nut901",
+                                 "PSQITT_C5TTLS_Nut901", "PSQITT_PSQITT_Nut901",
+                                 "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_sleep$PSQITT_C1TTLS_Nut901 <- scale(delta_sleep$PSQITT_C1TTLS_Nut901)[,1]
+delta_sleep$PSQITT_C5TTLS_Nut901 <- scale(delta_sleep$PSQITT_C5TTLS_Nut901)[,1]
+delta_sleep$PSQITT_PSQITT_Nut901 <- scale(delta_sleep$PSQITT_PSQITT_Nut901)[,1]
+
+delta_PSQITT_C1TTLS_Nut901 <- glm(delta ~ PSQITT_C1TTLS_Nut901, data=delta_sleep, family=gaussian())
+delta_PSQITT_C5TTLS_Nut901 <- glm(delta ~ PSQITT_C5TTLS_Nut901, data=delta_sleep, family=gaussian())
+delta_PSQITT_PSQITT_Nut901 <- glm(delta ~ PSQITT_PSQITT_Nut901, data=delta_sleep, family=gaussian())
+
+print(summary(delta_PSQITT_C1TTLS_Nut901))
+print(summary(delta_PSQITT_C5TTLS_Nut901))
+print(summary(delta_PSQITT_PSQITT_Nut901))
+
+### Plot Coefficients
+plot_sleep_cu_a_pos <- plot_models(delta_PSQITT_C1TTLS_Nut901,
+                            delta_PSQITT_C5TTLS_Nut901,
+                            delta_PSQITT_PSQITT_Nut901,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "PSQI Total",
+              "Sleep Efficiency",
+              "Duration of Sleep"
+                          ),
+            title="Pittsburg Sleep Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_sleep_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_sleep <- factor_data_cu_a_neg_vasc_pos[,c("delta", "PSQITT_C1TTLS_Nut901",
+                                 "PSQITT_C5TTLS_Nut901", "PSQITT_PSQITT_Nut901",
+                                 "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_sleep$PSQITT_C1TTLS_Nut901 <- scale(delta_sleep$PSQITT_C1TTLS_Nut901)[,1]
+delta_sleep$PSQITT_C5TTLS_Nut901 <- scale(delta_sleep$PSQITT_C5TTLS_Nut901)[,1]
+delta_sleep$PSQITT_PSQITT_Nut901 <- scale(delta_sleep$PSQITT_PSQITT_Nut901)[,1]
+
+delta_PSQITT_C1TTLS_Nut901 <- glm(delta ~ PSQITT_C1TTLS_Nut901, data=delta_sleep, family=gaussian())
+delta_PSQITT_C5TTLS_Nut901 <- glm(delta ~ PSQITT_C5TTLS_Nut901, data=delta_sleep, family=gaussian())
+delta_PSQITT_PSQITT_Nut901 <- glm(delta ~ PSQITT_PSQITT_Nut901, data=delta_sleep, family=gaussian())
+
+print(summary(delta_PSQITT_C1TTLS_Nut901))
+print(summary(delta_PSQITT_C5TTLS_Nut901))
+print(summary(delta_PSQITT_PSQITT_Nut901))
+
+### Plot Coefficients
+plot_sleep_cu_v_pos <- plot_models(delta_PSQITT_C1TTLS_Nut901,
+                            delta_PSQITT_C5TTLS_Nut901,
+                            delta_PSQITT_PSQITT_Nut901,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "PSQI Total",
+              "Sleep Efficiency",
+              "Duration of Sleep"
+                          ),
+            title="Pittsburg Sleep Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_sleep_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/sleep_cu.svg",
+       plot=plot_sleep_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/sleep_cu_a_pos.svg",
+       plot=plot_sleep_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/sleep_cu_v_pos.svg",
+       plot=plot_sleep_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+### Takeaway
+No significant associations found.
+
+## MFE_ADCS_ADL
+
+### CU A- V-
+```{r}
+delta_mfe <- factor_data_cu[,c("delta", "P1_MFE_TotalScore",
+                                 "P1_ADLAUT_SCORE9_Neu213", "P1_ADLINF_SCORE9_Neu214",
+                                 "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_mfe$P1_MFE_TotalScore <- scale(delta_mfe$P1_MFE_TotalScore)[,1]
+delta_mfe$P1_ADLAUT_SCORE9_Neu213 <- scale(delta_mfe$P1_ADLAUT_SCORE9_Neu213)[,1]
+delta_mfe$P1_ADLINF_SCORE9_Neu214 <- scale(delta_mfe$P1_ADLINF_SCORE9_Neu214)[,1]
+
+delta_P1_MFE_TotalScore <- glm(delta ~ P1_MFE_TotalScore, data=delta_mfe, family=gaussian())
+delta_PP1_ADLAUT_SCORE9_Neu213 <- glm(delta ~ P1_ADLAUT_SCORE9_Neu213, data=delta_mfe, family=gaussian())
+delta_P1_ADLINF_SCORE9_Neu214 <- glm(delta ~ P1_ADLINF_SCORE9_Neu214, data=delta_mfe, family=gaussian())
+
+print(summary(delta_P1_MFE_TotalScore))
+print(summary(delta_PP1_ADLAUT_SCORE9_Neu213))
+print(summary(delta_P1_ADLINF_SCORE9_Neu214))
+
+### Plot Coefficients
+plot_mfce_cu <- plot_models(delta_P1_MFE_TotalScore,
+                            delta_PP1_ADLAUT_SCORE9_Neu213,
+                            delta_P1_ADLINF_SCORE9_Neu214,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "ADCS ADL Partner Score",
+              "ADCS ADL Auto Score",
+              "MFE Total Score"
+                          ),
+            title="MFCE ADCS ADL Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_mfce_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_mfe <- factor_data_cu_a_pos_vasc_neg[,c("delta", "P1_MFE_TotalScore",
+                                 "P1_ADLAUT_SCORE9_Neu213", "P1_ADLINF_SCORE9_Neu214",
+                                 "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_mfe$P1_MFE_TotalScore <- scale(delta_mfe$P1_MFE_TotalScore)[,1]
+delta_mfe$P1_ADLAUT_SCORE9_Neu213 <- scale(delta_mfe$P1_ADLAUT_SCORE9_Neu213)[,1]
+delta_mfe$P1_ADLINF_SCORE9_Neu214 <- scale(delta_mfe$P1_ADLINF_SCORE9_Neu214)[,1]
+
+delta_P1_MFE_TotalScore <- glm(delta ~ P1_MFE_TotalScore, data=delta_mfe, family=gaussian())
+delta_PP1_ADLAUT_SCORE9_Neu213 <- glm(delta ~ P1_ADLAUT_SCORE9_Neu213, data=delta_mfe, family=gaussian())
+delta_P1_ADLINF_SCORE9_Neu214 <- glm(delta ~ P1_ADLINF_SCORE9_Neu214, data=delta_mfe, family=gaussian())
+
+print(summary(delta_P1_MFE_TotalScore))
+print(summary(delta_PP1_ADLAUT_SCORE9_Neu213))
+print(summary(delta_P1_ADLINF_SCORE9_Neu214))
+
+### Plot Coefficients
+plot_mfce_cu_a_pos <- plot_models(delta_P1_MFE_TotalScore,
+                            delta_PP1_ADLAUT_SCORE9_Neu213,
+                            delta_P1_ADLINF_SCORE9_Neu214,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "ADCS ADL Partner Score",
+              "ADCS ADL Auto Score",
+              "MFE Total Score"
+                          ),
+            title="MFCE ADCS ADL Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_mfce_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_mfe <- factor_data_cu_a_neg_vasc_pos[,c("delta", "P1_MFE_TotalScore",
+                                 "P1_ADLAUT_SCORE9_Neu213", "P1_ADLINF_SCORE9_Neu214",
+                                 "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_mfe$P1_MFE_TotalScore <- scale(delta_mfe$P1_MFE_TotalScore)[,1]
+delta_mfe$P1_ADLAUT_SCORE9_Neu213 <- scale(delta_mfe$P1_ADLAUT_SCORE9_Neu213)[,1]
+delta_mfe$P1_ADLINF_SCORE9_Neu214 <- scale(delta_mfe$P1_ADLINF_SCORE9_Neu214)[,1]
+
+delta_P1_MFE_TotalScore <- glm(delta ~ P1_MFE_TotalScore, data=delta_mfe, family=gaussian())
+delta_PP1_ADLAUT_SCORE9_Neu213 <- glm(delta ~ P1_ADLAUT_SCORE9_Neu213, data=delta_mfe, family=gaussian())
+delta_P1_ADLINF_SCORE9_Neu214 <- glm(delta ~ P1_ADLINF_SCORE9_Neu214, data=delta_mfe, family=gaussian())
+
+print(summary(delta_P1_MFE_TotalScore))
+print(summary(delta_PP1_ADLAUT_SCORE9_Neu213))
+print(summary(delta_P1_ADLINF_SCORE9_Neu214))
+
+### Plot Coefficients
+plot_mfce_cu_v_pos <- plot_models(delta_P1_MFE_TotalScore,
+                            delta_PP1_ADLAUT_SCORE9_Neu213,
+                            delta_P1_ADLINF_SCORE9_Neu214,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "ADCS ADL Partner Score",
+              "ADCS ADL Auto Score",
+              "MFE Total Score"
+                          ),
+            title="MFCE ADCS ADL Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_mfce_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/mfce_cu.svg",
+       plot=plot_mfce_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/mfce_cu_a_pos.svg",
+       plot=plot_mfce_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/mfce_cu_v_pos.svg",
+       plot=plot_mfce_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+### Takeaway
+No significant associations found.
+
+## Cardiovascular Parameters
+
+### CU A- V-
+```{r}
+delta_cardio <- factor_data_cu[,c("delta", "CARDIO_PRSNCE_Neu12",
+                                  "IHDISE_PRSNCE_Neu12", "sex",
+                                  "educ_years_std", "P1_APOE4_load_std")]
+
+delta_cardio$CARDIO_PRSNCE_Neu12 <- ifelse(delta_cardio$CARDIO_PRSNCE_Neu12 == "YES", 1, 0)
+delta_cardio$IHDISE_PRSNCE_Neu12 <- ifelse(delta_cardio$IHDISE_PRSNCE_Neu12 == "NO", 0, 1)
+
+delta_CARDIO_PRSNCE_Neu12 <- glm(delta ~ CARDIO_PRSNCE_Neu12, data=delta_cardio, family=gaussian())
+delta_IHDISE_PRSNCE_Neu12 <- glm(delta ~ IHDISE_PRSNCE_Neu12, data=delta_cardio, family=gaussian())
+
+print(summary(delta_CARDIO_PRSNCE_Neu12))
+print(summary(delta_IHDISE_PRSNCE_Neu12))
+
+### Plot Coefficients
+plot_cardiovasc_cu <- plot_models(delta_CARDIO_PRSNCE_Neu12,
+                            delta_IHDISE_PRSNCE_Neu12,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Ischemic Heart Disease Presence",
+              "Cardiovascular Disease Presence"
+                          ),
+            title="Cardiovascular Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_cardiovasc_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_cardio <- factor_data_cu_a_pos_vasc_neg[,c("delta", "CARDIO_PRSNCE_Neu12",
+                                  "IHDISE_PRSNCE_Neu12", "sex",
+                                  "educ_years_std", "P1_APOE4_load_std")]
+
+delta_cardio$CARDIO_PRSNCE_Neu12 <- ifelse(delta_cardio$CARDIO_PRSNCE_Neu12 == "YES", 1, 0)
+delta_cardio$IHDISE_PRSNCE_Neu12 <- ifelse(delta_cardio$IHDISE_PRSNCE_Neu12 == "NO", 0, 1)
+
+delta_CARDIO_PRSNCE_Neu12 <- glm(delta ~ CARDIO_PRSNCE_Neu12, data=delta_cardio, family=gaussian())
+delta_IHDISE_PRSNCE_Neu12 <- glm(delta ~ IHDISE_PRSNCE_Neu12, data=delta_cardio, family=gaussian())
+
+print(summary(delta_CARDIO_PRSNCE_Neu12))
+print(summary(delta_IHDISE_PRSNCE_Neu12))
+
+### Plot Coefficients
+plot_cardiovasc_cu_a_pos <- plot_models(delta_CARDIO_PRSNCE_Neu12,
+                            delta_IHDISE_PRSNCE_Neu12,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Ischemic Heart Disease Presence",
+              "Cardiovascular Disease Presence"
+                          ),
+            title="Cardiovascular Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_cardiovasc_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_cardio <- factor_data_cu_a_neg_vasc_pos[,c("delta", "CARDIO_PRSNCE_Neu12",
+                                  "IHDISE_PRSNCE_Neu12", "sex",
+                                  "educ_years_std", "P1_APOE4_load_std")]
+
+delta_cardio$CARDIO_PRSNCE_Neu12 <- ifelse(delta_cardio$CARDIO_PRSNCE_Neu12 == "YES", 1, 0)
+delta_cardio$IHDISE_PRSNCE_Neu12 <- ifelse(delta_cardio$IHDISE_PRSNCE_Neu12 == "NO", 0, 1)
+
+delta_CARDIO_PRSNCE_Neu12 <- glm(delta ~ CARDIO_PRSNCE_Neu12, data=delta_cardio, family=gaussian())
+delta_IHDISE_PRSNCE_Neu12 <- glm(delta ~ IHDISE_PRSNCE_Neu12, data=delta_cardio, family=gaussian())
+
+print(summary(delta_CARDIO_PRSNCE_Neu12))
+print(summary(delta_IHDISE_PRSNCE_Neu12))
+
+# ### Plot Coefficients
+# plot_cardiovasc_cu_v_pos <- plot_models(delta_CARDIO_PRSNCE_Neu12,
+#                             delta_IHDISE_PRSNCE_Neu12,
+#             
+#             rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+#             grid=FALSE,
+#             show.values=TRUE,
+#             show.p=FALSE,
+#             show.legend=FALSE,
+#             colors="blue",
+#             axis.labels=c(
+#               "Ischemic Heart Disease Presence",
+#               "Cardiovascular Disease Presence"
+#                           ),
+#             title="Cardiovascular Factors (CU V+)"
+#             ) + labs(y="Standardized Estimated Beta Coefficients",
+#                      x="Factor Name") + graph_th
+# print(plot_cardiovasc_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/cardiovasc_cu.svg",
+       plot=plot_cardiovasc_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/cardiovasc_cu_a_pos.svg",
+       plot=plot_cardiovasc_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeaway
+
+No significant associations found in the sample.
+
+## Neurobehavioral Parameters
+
+### CU A- V-
+```{r}
+delta_neurobehav <- factor_data_cu[,c("delta", "BPSHAD_HADANX_Neu207",
+                                      "BPSHAD_HADEPR_Neu207", 
+                                      "BPSNPI_NPITOT_Neu209",
+                                      "BPSTRS_PSQZSC_Neu210", "sex",
+                                      "educ_years_std", "P1_APOE4_load_std")]
+
+delta_neurobehav$BPSHAD_HADANX_Neu207 <- scale(delta_neurobehav$BPSHAD_HADANX_Neu207)
+delta_neurobehav$BPSHAD_HADEPR_Neu207 <- scale(delta_neurobehav$BPSHAD_HADEPR_Neu207)
+delta_neurobehav$BPSNPI_NPITOT_Neu209 <- scale(delta_neurobehav$BPSNPI_NPITOT_Neu209)
+delta_neurobehav$BPSTRS_PSQZSC_Neu210 <- scale(delta_neurobehav$BPSTRS_PSQZSC_Neu210)
+
+delta_BPSHAD_HADANX_Neu207 <- glm(delta ~ BPSHAD_HADANX_Neu207, data=delta_neurobehav, family=gaussian())
+delta_BPSHAD_HADEPR_Neu207 <- glm(delta ~ BPSHAD_HADEPR_Neu207, data=delta_neurobehav, family=gaussian())
+delta_BPSNPI_NPITOT_Neu209 <- glm(delta ~ BPSNPI_NPITOT_Neu209, data=delta_neurobehav, family=gaussian())
+delta_BPSTRS_PSQZSC_Neu210 <- glm(delta ~ BPSTRS_PSQZSC_Neu210, data=delta_neurobehav, family=gaussian())
+
+print(summary(delta_BPSHAD_HADANX_Neu207))
+print(summary(delta_BPSHAD_HADEPR_Neu207))
+print(summary(delta_BPSNPI_NPITOT_Neu209))
+print(summary(delta_BPSTRS_PSQZSC_Neu210))
+
+### Plot Coefficients
+plot_neurobehav_cu <- plot_models(delta_BPSHAD_HADANX_Neu207,
+                            delta_BPSHAD_HADEPR_Neu207,
+                            delta_BPSNPI_NPITOT_Neu209,
+                            delta_BPSTRS_PSQZSC_Neu210,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "HAD Scale Anxiety Score",
+              "HAD Scale Depression Score",
+              "NPI Total Score",
+              "Perceived Stress Quest. Index Z-Score"
+                          ),
+            title="Neurobehavioral Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_neurobehav_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_neurobehav <- factor_data_cu_a_pos_vasc_neg[,c("delta", "BPSHAD_HADANX_Neu207",
+                                      "BPSHAD_HADEPR_Neu207", 
+                                      "BPSNPI_NPITOT_Neu209",
+                                      "BPSTRS_PSQZSC_Neu210", "sex",
+                                      "educ_years_std", "P1_APOE4_load_std")]
+
+delta_neurobehav$BPSHAD_HADANX_Neu207 <- scale(delta_neurobehav$BPSHAD_HADANX_Neu207)
+delta_neurobehav$BPSHAD_HADEPR_Neu207 <- scale(delta_neurobehav$BPSHAD_HADEPR_Neu207)
+delta_neurobehav$BPSNPI_NPITOT_Neu209 <- scale(delta_neurobehav$BPSNPI_NPITOT_Neu209)
+delta_neurobehav$BPSTRS_PSQZSC_Neu210 <- scale(delta_neurobehav$BPSTRS_PSQZSC_Neu210)
+
+delta_BPSHAD_HADANX_Neu207 <- glm(delta ~ BPSHAD_HADANX_Neu207, data=delta_neurobehav, family=gaussian())
+delta_BPSHAD_HADEPR_Neu207 <- glm(delta ~ BPSHAD_HADEPR_Neu207, data=delta_neurobehav, family=gaussian())
+delta_BPSNPI_NPITOT_Neu209 <- glm(delta ~ BPSNPI_NPITOT_Neu209, data=delta_neurobehav, family=gaussian())
+delta_BPSTRS_PSQZSC_Neu210 <- glm(delta ~ BPSTRS_PSQZSC_Neu210, data=delta_neurobehav, family=gaussian())
+
+print(summary(delta_BPSHAD_HADANX_Neu207))
+print(summary(delta_BPSHAD_HADEPR_Neu207))
+print(summary(delta_BPSNPI_NPITOT_Neu209))
+print(summary(delta_BPSTRS_PSQZSC_Neu210))
+
+### Plot Coefficients
+plot_neurobehav_cu_a_pos <- plot_models(delta_BPSHAD_HADANX_Neu207,
+                            delta_BPSHAD_HADEPR_Neu207,
+                            delta_BPSNPI_NPITOT_Neu209,
+                            delta_BPSTRS_PSQZSC_Neu210,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "HAD Scale Anxiety Score",
+              "HAD Scale Depression Score",
+              "NPI Total Score",
+              "Perceived Stress Quest. Index Z-Score"
+                          ),
+            title="Neurobehavioral Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_neurobehav_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_neurobehav <- factor_data_cu_a_neg_vasc_pos[,c("delta", "BPSHAD_HADANX_Neu207",
+                                      "BPSHAD_HADEPR_Neu207", 
+                                      "BPSNPI_NPITOT_Neu209",
+                                      "BPSTRS_PSQZSC_Neu210", "sex",
+                                      "educ_years_std", "P1_APOE4_load_std")]
+
+delta_neurobehav$BPSHAD_HADANX_Neu207 <- scale(delta_neurobehav$BPSHAD_HADANX_Neu207)
+delta_neurobehav$BPSHAD_HADEPR_Neu207 <- scale(delta_neurobehav$BPSHAD_HADEPR_Neu207)
+delta_neurobehav$BPSNPI_NPITOT_Neu209 <- scale(delta_neurobehav$BPSNPI_NPITOT_Neu209)
+delta_neurobehav$BPSTRS_PSQZSC_Neu210 <- scale(delta_neurobehav$BPSTRS_PSQZSC_Neu210)
+
+delta_BPSHAD_HADANX_Neu207 <- glm(delta ~ BPSHAD_HADANX_Neu207, data=delta_neurobehav, family=gaussian())
+delta_BPSHAD_HADEPR_Neu207 <- glm(delta ~ BPSHAD_HADEPR_Neu207, data=delta_neurobehav, family=gaussian())
+delta_BPSNPI_NPITOT_Neu209 <- glm(delta ~ BPSNPI_NPITOT_Neu209, data=delta_neurobehav, family=gaussian())
+delta_BPSTRS_PSQZSC_Neu210 <- glm(delta ~ BPSTRS_PSQZSC_Neu210, data=delta_neurobehav, family=gaussian())
+
+print(summary(delta_BPSHAD_HADANX_Neu207))
+print(summary(delta_BPSHAD_HADEPR_Neu207))
+print(summary(delta_BPSNPI_NPITOT_Neu209))
+print(summary(delta_BPSTRS_PSQZSC_Neu210))
+
+### Plot Coefficients
+plot_neurobehav_cu_v_pos <- plot_models(delta_BPSHAD_HADANX_Neu207,
+                            delta_BPSHAD_HADEPR_Neu207,
+                            delta_BPSNPI_NPITOT_Neu209,
+                            delta_BPSTRS_PSQZSC_Neu210,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "HAD Scale Anxiety Score",
+              "HAD Scale Depression Score",
+              "NPI Total Score",
+              "Perceived Stress Quest. Index Z-Score"
+                          ),
+            title="Neurobehavioral Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_neurobehav_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/neurobehav_cu.svg",
+       plot=plot_neurobehav_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/neurobehav_cu_a_pos.svg",
+       plot=plot_neurobehav_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/neurobehav_cu_v_pos.svg",
+       plot=plot_neurobehav_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeway
+No significant associations found.
+
+
+## Vascular Parameters
+
+### CU A- V-
+```{r}
+delta_vascular <- factor_data_cu[,c("delta", "P1_CVMSRS_SYSTBP_Nur201",
+                                    "P1_CVMSRS_DIASBP_Nur201",
+                                    "P1_CVMSRS_HRTRTE_Nur201",
+                                    "P1_CVMSRS_RTANKA_Nur201",
+                                    "P1_CVMSRS_LTANKA_Nur201",
+                                    "P1_ECG999_HRTRTE_Nur202", "sex",
+                                    "educ_years_std", "P1_APOE4_load_std")]
+
+delta_vascular$P1_ECG999_HRTRTE_Nur202 <- gsub("lx'", "", delta_vascular$P1_ECG999_HRTRTE_Nur202)
+
+delta_vascular$P1_CVMSRS_SYSTBP_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_SYSTBP_Nur201))
+delta_vascular$P1_CVMSRS_DIASBP_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_DIASBP_Nur201))
+delta_vascular$P1_CVMSRS_HRTRTE_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_HRTRTE_Nur201))
+delta_vascular$P1_CVMSRS_RTANKA_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_RTANKA_Nur201))
+delta_vascular$P1_CVMSRS_LTANKA_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_LTANKA_Nur201))
+delta_vascular$P1_ECG999_HRTRTE_Nur202 <- scale(as.numeric(delta_vascular$P1_ECG999_HRTRTE_Nur202))
+
+delta_P1_CVMSRS_SYSTBP_Nur201 <- glm(delta ~ P1_CVMSRS_SYSTBP_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_DIASBP_Nur201 <- glm(delta ~ P1_CVMSRS_DIASBP_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_HRTRTE_Nur201 <- glm(delta ~ P1_CVMSRS_HRTRTE_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_RTANKA_Nur201 <- glm(delta ~ P1_CVMSRS_RTANKA_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_LTANKA_Nur201 <- glm(delta ~ P1_CVMSRS_LTANKA_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_ECG999_HRTRTE_Nur202 <- glm(delta ~ P1_ECG999_HRTRTE_Nur202, data=delta_vascular, family=gaussian())
+
+print(summary(delta_P1_CVMSRS_SYSTBP_Nur201))
+print(summary(delta_P1_CVMSRS_DIASBP_Nur201))
+print(summary(delta_P1_CVMSRS_HRTRTE_Nur201))
+print(summary(delta_P1_CVMSRS_RTANKA_Nur201))
+print(summary(delta_P1_CVMSRS_LTANKA_Nur201))
+print(summary(delta_P1_ECG999_HRTRTE_Nur202))
+
+### Plot Coefficients
+plot_vascular_cu <- plot_models(delta_P1_CVMSRS_SYSTBP_Nur201,
+                            delta_P1_CVMSRS_DIASBP_Nur201,
+                            delta_P1_CVMSRS_HRTRTE_Nur201,
+                            delta_P1_CVMSRS_RTANKA_Nur201,
+                            delta_P1_CVMSRS_LTANKA_Nur201,
+                            delta_P1_ECG999_HRTRTE_Nur202,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Systolic Pressure",
+              "Diastolic Pressure",
+              "Heart Rate",
+              "Right Ankle Ratio",
+              "Left Ankle Ratio",
+              "ECG Heart Rate"
+                          ),
+            title="Vascular Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_vascular_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_vascular <- factor_data_cu_a_pos_vasc_neg[,c("delta", "P1_CVMSRS_SYSTBP_Nur201",
+                                    "P1_CVMSRS_DIASBP_Nur201",
+                                    "P1_CVMSRS_HRTRTE_Nur201",
+                                    "P1_CVMSRS_RTANKA_Nur201",
+                                    "P1_CVMSRS_LTANKA_Nur201",
+                                    "P1_ECG999_HRTRTE_Nur202", "sex",
+                                    "educ_years_std", "P1_APOE4_load_std")]
+
+delta_vascular$P1_ECG999_HRTRTE_Nur202 <- gsub("lx'", "", delta_vascular$P1_ECG999_HRTRTE_Nur202)
+
+delta_vascular$P1_CVMSRS_SYSTBP_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_SYSTBP_Nur201))
+delta_vascular$P1_CVMSRS_DIASBP_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_DIASBP_Nur201))
+delta_vascular$P1_CVMSRS_HRTRTE_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_HRTRTE_Nur201))
+delta_vascular$P1_CVMSRS_RTANKA_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_RTANKA_Nur201))
+delta_vascular$P1_CVMSRS_LTANKA_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_LTANKA_Nur201))
+delta_vascular$P1_ECG999_HRTRTE_Nur202 <- scale(as.numeric(delta_vascular$P1_ECG999_HRTRTE_Nur202))
+
+delta_P1_CVMSRS_SYSTBP_Nur201 <- glm(delta ~ P1_CVMSRS_SYSTBP_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_DIASBP_Nur201 <- glm(delta ~ P1_CVMSRS_DIASBP_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_HRTRTE_Nur201 <- glm(delta ~ P1_CVMSRS_HRTRTE_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_RTANKA_Nur201 <- glm(delta ~ P1_CVMSRS_RTANKA_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_LTANKA_Nur201 <- glm(delta ~ P1_CVMSRS_LTANKA_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_ECG999_HRTRTE_Nur202 <- glm(delta ~ P1_ECG999_HRTRTE_Nur202, data=delta_vascular, family=gaussian())
+
+print(summary(delta_P1_CVMSRS_SYSTBP_Nur201))
+print(summary(delta_P1_CVMSRS_DIASBP_Nur201))
+print(summary(delta_P1_CVMSRS_HRTRTE_Nur201))
+print(summary(delta_P1_CVMSRS_RTANKA_Nur201))
+print(summary(delta_P1_CVMSRS_LTANKA_Nur201))
+print(summary(delta_P1_ECG999_HRTRTE_Nur202))
+
+### Plot Coefficients
+plot_vascular_cu_a_pos <- plot_models(delta_P1_CVMSRS_SYSTBP_Nur201,
+                            delta_P1_CVMSRS_DIASBP_Nur201,
+                            delta_P1_CVMSRS_HRTRTE_Nur201,
+                            delta_P1_CVMSRS_RTANKA_Nur201,
+                            delta_P1_CVMSRS_LTANKA_Nur201,
+                            delta_P1_ECG999_HRTRTE_Nur202,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Systolic Pressure",
+              "Diastolic Pressure",
+              "Heart Rate",
+              "Right Ankle Ratio",
+              "Left Ankle Ratio",
+              "ECG Heart Rate"
+                          ),
+            title="Vascular Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_vascular_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_vascular <- factor_data_cu_a_neg_vasc_pos[,c("delta", "P1_CVMSRS_SYSTBP_Nur201",
+                                    "P1_CVMSRS_DIASBP_Nur201",
+                                    "P1_CVMSRS_HRTRTE_Nur201",
+                                    "P1_CVMSRS_RTANKA_Nur201",
+                                    "P1_CVMSRS_LTANKA_Nur201",
+                                    "P1_ECG999_HRTRTE_Nur202", "sex",
+                                    "educ_years_std", "P1_APOE4_load_std")]
+
+delta_vascular$P1_ECG999_HRTRTE_Nur202 <- gsub("lx'", "", delta_vascular$P1_ECG999_HRTRTE_Nur202)
+
+delta_vascular$P1_CVMSRS_SYSTBP_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_SYSTBP_Nur201))
+delta_vascular$P1_CVMSRS_DIASBP_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_DIASBP_Nur201))
+delta_vascular$P1_CVMSRS_HRTRTE_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_HRTRTE_Nur201))
+delta_vascular$P1_CVMSRS_RTANKA_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_RTANKA_Nur201))
+delta_vascular$P1_CVMSRS_LTANKA_Nur201 <- scale(as.numeric(delta_vascular$P1_CVMSRS_LTANKA_Nur201))
+delta_vascular$P1_ECG999_HRTRTE_Nur202 <- scale(as.numeric(delta_vascular$P1_ECG999_HRTRTE_Nur202))
+
+delta_P1_CVMSRS_SYSTBP_Nur201 <- glm(delta ~ P1_CVMSRS_SYSTBP_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_DIASBP_Nur201 <- glm(delta ~ P1_CVMSRS_DIASBP_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_HRTRTE_Nur201 <- glm(delta ~ P1_CVMSRS_HRTRTE_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_RTANKA_Nur201 <- glm(delta ~ P1_CVMSRS_RTANKA_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_CVMSRS_LTANKA_Nur201 <- glm(delta ~ P1_CVMSRS_LTANKA_Nur201, data=delta_vascular, family=gaussian())
+delta_P1_ECG999_HRTRTE_Nur202 <- glm(delta ~ P1_ECG999_HRTRTE_Nur202, data=delta_vascular, family=gaussian())
+
+print(summary(delta_P1_CVMSRS_SYSTBP_Nur201))
+print(summary(delta_P1_CVMSRS_DIASBP_Nur201))
+print(summary(delta_P1_CVMSRS_HRTRTE_Nur201))
+print(summary(delta_P1_CVMSRS_RTANKA_Nur201))
+print(summary(delta_P1_CVMSRS_LTANKA_Nur201))
+print(summary(delta_P1_ECG999_HRTRTE_Nur202))
+
+### Plot Coefficients
+plot_vascular_cu_v_pos <- plot_models(delta_P1_CVMSRS_SYSTBP_Nur201,
+                            delta_P1_CVMSRS_DIASBP_Nur201,
+                            delta_P1_CVMSRS_HRTRTE_Nur201,
+                            delta_P1_CVMSRS_RTANKA_Nur201,
+                            delta_P1_CVMSRS_LTANKA_Nur201,
+                            delta_P1_ECG999_HRTRTE_Nur202,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Systolic Pressure",
+              "Diastolic Pressure",
+              "Heart Rate",
+              "Right Ankle Ratio",
+              "Left Ankle Ratio",
+              "ECG Heart Rate"
+                          ),
+            title="Vascular Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_vascular_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/vascular_cu.svg",
+       plot=plot_vascular_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/vascular_cu_a_pos.svg",
+       plot=plot_vascular_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/vascular_cu_v_pos.svg",
+       plot=plot_vascular_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeaway
+No significant associations found.
+
+## Cognitive Reserve
+
+### CU A- V-
+```{r}
+delta_cog_reserv <- factor_data_cu[,c("delta",
+                           "CRC_Total", "P1_CUEST_OCIO_PRODUCTIVAS_TOTAL",
+                           "P1_VOCBWS_TTLZSC_Nps102", "P1_BILINGUISMO",
+                           "P1_EARLY_LATE_MONOL",
+                           "sex", "educ_years_std", "P1_APOE4_load_std")]
+```
+
+```{r}
+delta_cog_reserv$CRC_Total_std <- scale(delta_cog_reserv$CRC_Total)
+delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102_std <- scale(delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102)
+delta_cog_reserv$P1_BILINGUISMO_std <- scale(ifelse(delta_cog_reserv$P1_BILINGUISMO == "Bilinguals", 1, 0))
+delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std <- scale(delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL)
+
+delta_CRC_Total <- glm(delta ~ CRC_Total_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102 <-  glm(delta ~ P1_VOCBWS_TTLZSC_Nps102_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_BILINGUISMO <- glm(delta ~ P1_BILINGUISMO_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL <- glm(delta ~ P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std, data=delta_cog_reserv, family=gaussian())
+
+print(summary(delta_CRC_Total))
+print(summary(delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102))
+print(summary(delta_cog_reserv_P1_BILINGUISMO))
+print(summary(delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL))
+```
+
+### CU A- V- correcting for sex, educ_years, and APOE4 load
+```{r}
+delta_cog_reserv <- factor_data_cu[,c("delta",
+                           "CRC_Total", "P1_CUEST_OCIO_PRODUCTIVAS_TOTAL",
+                           "P1_VOCBWS_TTLZSC_Nps102", "P1_BILINGUISMO",
+                           "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_cog_reserv$CRC_Total_std <- scale(delta_cog_reserv$CRC_Total)[,1]
+delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102_std <- scale(delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102)[,1]
+delta_cog_reserv$P1_BILINGUISMO_std <- scale(ifelse(delta_cog_reserv$P1_BILINGUISMO == "Bilinguals", 1, 0))
+delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std <- scale(delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL)[,1]
+
+delta_CRC_Total_cu <- glm(delta ~ CRC_Total_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu <-  glm(delta ~ P1_VOCBWS_TTLZSC_Nps102_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_BILINGUISMO_cu <- glm(delta ~ P1_BILINGUISMO_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu <- glm(delta ~ P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+
+print(summary(delta_CRC_Total_cu))
+print(summary(delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu))
+print(summary(delta_cog_reserv_P1_BILINGUISMO_cu))
+print(summary(delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu))
+
+p <- c(summary(delta_CRC_Total_cu)$coefficients[2,4],
+       summary(delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu)$coefficients[2,4],
+       summary(delta_cog_reserv_P1_BILINGUISMO_cu)$coefficients[2,4],
+       summary(delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu)$coefficients[2,4])
+print(p.adjust(p, method="fdr"))
+
+### Plot Coefficients
+plot_cog_reserve_models_cu <- plot_models(delta_CRC_Total_cu,
+            delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu,
+            delta_cog_reserv_P1_BILINGUISMO_cu,
+            delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Leisure and Productive Activities Questionnaire",
+                          "Bilingualism",
+                          "WAIS-III Vocabulary Subtest",
+                          "Cognitive Reserve Questionnaire"),
+            title="Cognitive Reserve Factors (CU A-V-), covariate corrected"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_cog_reserve_models_cu)
+```
+
+
+See the association between years of education and vocabulary.
+```{r}
+educ_years_vocab <- regression_analysis(delta_cog_reserv,
+                                            "P1_VOCBWS_TTLZSC_Nps102_std",
+                                            "educ_years_std",
+                                        c("sex")
+                                            )
+educ_years_vocab$scatter_plot
+```
+
+See the association between delta and vocabulary.
+```{r}
+delta_vocab <- regression_analysis(delta_cog_reserv,
+                                        "delta",
+                                        "P1_VOCBWS_TTLZSC_Nps102",
+                                        c("sex", "educ_years_std", "P1_APOE4_load_std")
+                                   )
+delta_vocab$scatter_plot
+ggsave("delta_vocab_CU_A-_V-.svg", plot=delta_vocab$scatter_plot,
+       dpi=600)
+```
+
+### CU A+ V-
+```{r}
+delta_cog_reserv <- factor_data_cu_a_pos_vasc_neg[,c("delta",
+                           "CRC_Total", "P1_CUEST_OCIO_PRODUCTIVAS_TOTAL",
+                           "P1_VOCBWS_TTLZSC_Nps102", "P1_BILINGUISMO",
+                           "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_cog_reserv$CRC_Total_std <- scale(delta_cog_reserv$CRC_Total)
+delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102_std <- scale(delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102)
+delta_cog_reserv$P1_BILINGUISMO_std <- scale(ifelse(delta_cog_reserv$P1_BILINGUISMO == "Bilinguals", 1, 0))
+delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std <- scale(delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL)
+
+delta_CRC_Total <- glm(delta ~ CRC_Total_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102 <-  glm(delta ~ P1_VOCBWS_TTLZSC_Nps102_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_BILINGUISMO <- glm(delta ~ P1_BILINGUISMO_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL <- glm(delta ~ P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std, data=delta_cog_reserv, family=gaussian())
+
+print(summary(delta_CRC_Total))
+print(summary(delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102))
+print(summary(delta_cog_reserv_P1_BILINGUISMO))
+print(summary(delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL))
+```
+
+### CU A+ V- correcting for sex, educ_years, and APOE4 load
+```{r}
+delta_cog_reserv <- factor_data_cu_a_pos_vasc_neg[,c("delta",
+                           "CRC_Total", "P1_CUEST_OCIO_PRODUCTIVAS_TOTAL",
+                           "P1_VOCBWS_TTLZSC_Nps102", "P1_BILINGUISMO",
+                           "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_cog_reserv$CRC_Total_std <- scale(delta_cog_reserv$CRC_Total)
+delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102_std <- scale(delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102)
+delta_cog_reserv$P1_BILINGUISMO_std <- scale(ifelse(delta_cog_reserv$P1_BILINGUISMO == "Bilinguals", 1, 0))
+delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std <- scale(delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL)
+
+delta_CRC_Total_cu_a_pos <- glm(delta ~ CRC_Total_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu_a_pos <-  glm(delta ~ P1_VOCBWS_TTLZSC_Nps102_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_BILINGUISMO_cu_a_pos <- glm(delta ~ P1_BILINGUISMO_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu_a_pos <- glm(delta ~ P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std + sex + educ_years_std + P1_APOE4_load_std,, data=delta_cog_reserv, family=gaussian())
+
+print(summary(delta_CRC_Total_cu_a_pos))
+print(summary(delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu_a_pos))
+print(summary(delta_cog_reserv_P1_BILINGUISMO_cu_a_pos))
+print(summary(delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu_a_pos))
+
+p <- c(summary(delta_CRC_Total_cu_a_pos)$coefficients[2,4],
+       summary(delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu_a_pos)$coefficients[2,4],
+       summary(delta_cog_reserv_P1_BILINGUISMO_cu_a_pos)$coefficients[2,4],
+       summary(delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu_a_pos)$coefficients[2,4])
+print(p.adjust(p, method="fdr"))
+
+### Plot Coefficients
+plot_cog_reserve_models_cu_a_pos <- plot_models(delta_CRC_Total_cu_a_pos,
+            delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu_a_pos,
+            delta_cog_reserv_P1_BILINGUISMO_cu_a_pos,
+            delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu_a_pos,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Leisure and Productive Activities Questionnaire",
+                          "Bilingualism",
+                          "WAIS-III Vocabulary Subtest",
+                          "Cognitive Reserve Questionnaire"),
+            title="Cognitive Reserve Factors (CU A+), covariate corrected"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_cog_reserve_models_cu_a_pos)
+```
+
+```{r}
+educ_years_vocab <- regression_analysis(delta_cog_reserv,
+                                            "P1_VOCBWS_TTLZSC_Nps102_std",
+                                            "educ_years_std",
+                                        c("sex")
+                                            )
+educ_years_vocab$scatter_plot
+```
+
+See the association between delta and vocabulary.
+```{r}
+delta_crq <- regression_analysis(delta_cog_reserv,
+                                        "delta",
+                                        "CRC_Total",
+                                        c("sex", "educ_years_std", "P1_APOE4_load_std")
+                                   )
+delta_crq$scatter_plot
+ggsave("delta_crq_CU_A+.svg", plot=delta_crq$scatter_plot,
+       dpi=600)
+
+delta_vocab <- regression_analysis(delta_cog_reserv,
+                                        "delta",
+                                        "P1_VOCBWS_TTLZSC_Nps102",
+                                        c("sex", "educ_years_std", "P1_APOE4_load_std")
+                                   )
+delta_vocab$scatter_plot
+ggsave("delta_vocab_CU_A+.svg", plot=delta_vocab$scatter_plot,
+       dpi=600)
+```
+
+
+
+### CU A- V+
+```{r}
+delta_cog_reserv <- factor_data_cu_a_neg_vasc_pos[,c("delta",
+                           "CRC_Total", "P1_CUEST_OCIO_PRODUCTIVAS_TOTAL",
+                           "P1_VOCBWS_TTLZSC_Nps102", "P1_BILINGUISMO",
+                           "sex", "educ_years_std", "P1_APOE4_load_std")]
+
+delta_cog_reserv$CRC_Total_std <- scale(delta_cog_reserv$CRC_Total)
+delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102_std <- scale(delta_cog_reserv$P1_VOCBWS_TTLZSC_Nps102)
+delta_cog_reserv$P1_BILINGUISMO_std <- scale(ifelse(delta_cog_reserv$P1_BILINGUISMO == "Bilinguals", 1, 0))
+delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std <- scale(delta_cog_reserv$P1_CUEST_OCIO_PRODUCTIVAS_TOTAL)
+
+delta_CRC_Total_cu_v_pos <- glm(delta ~ CRC_Total_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu_v_pos <-  glm(delta ~ P1_VOCBWS_TTLZSC_Nps102_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_BILINGUISMO_cu_v_pos <- glm(delta ~ P1_BILINGUISMO_std, data=delta_cog_reserv, family=gaussian())
+delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu_v_pos <- glm(delta ~ P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_std, data=delta_cog_reserv, family=gaussian())
+
+print(summary(delta_CRC_Total_cu_v_pos))
+print(summary(delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu_v_pos))
+print(summary(delta_cog_reserv_P1_BILINGUISMO_cu_v_pos))
+print(summary(delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu_v_pos))
+
+### Plot Coefficients
+plot_cog_reserve_models_cu_v_pos <- plot_models(delta_CRC_Total_cu_v_pos,
+            delta_cog_reserv_P1_VOCBWS_TTLZSC_Nps102_cu_v_pos,
+            delta_cog_reserv_P1_BILINGUISMO_cu_v_pos,
+            delta_cog_reserv_P1_CUEST_OCIO_PRODUCTIVAS_TOTAL_cu_v_pos,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Leisure and Productive Activities Questionnaire",
+                          "Bilingualism",
+                          "WAIS-III Vocabulary Subtest",
+                          "Cognitive Reserve Questionnaire"),
+            title="Cognitive Reserve Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_cog_reserve_models_cu_v_pos)
+```
+```{r}
+ggsave("../paper/plots/forest_plots/cog_reserve_cu.svg",
+       plot=plot_cog_reserve_models_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/cog_reserve_cu_a_pos.svg",
+       plot=plot_cog_reserve_models_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/cog_reserve_cu_v_pos.svg",
+       plot=plot_cog_reserve_models_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+
+### Takeaway
+We see a strong association between delta and the vocabulary test Z score (P1_VOCBWS_TTLZSC_Nps102), when asking "What is the effect of vocabulary *independent* of education, sex, and APOE4 load?". The vocabulary test is highly correlated to the years of education (they share variance), *but* because we corrected for this effect in our question, we are looking at the effect of residual variation in the vocabulary that education does not explain. The vocabulary score predicts delta even after removing the shared variance with education, so vocabulary captures something beyond educational effects.
+
+
+## Tobacco
+
+### CU A- V-
+```{r}
+delta_tobacco <- factor_data_cu[,c("delta", "SMOKNG_TYPSMK_Nut501",
+                                      "SMOKNG_NUMCIG_Nut501",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_tobacco$SMOKNG_NUMCIG_Nut501_std <- scale(delta_tobacco$SMOKNG_NUMCIG_Nut501)
+# SMOKNG_TYPSMK is 1 for non-smokers, 2,3 or 4 for former or current smokers.
+delta_tobacco$SMOKNG_TYPSMK_Nut501 <- ifelse(delta_tobacco$SMOKNG_TYPSMK_Nut501 == 1, 0, 1)
+
+delta_SMOKNG_NUMCIG_Nut501_cu <- glm(delta ~ SMOKNG_NUMCIG_Nut501_std, data=delta_tobacco, family=gaussian())
+delta_SMOKNG_TYPSMK_Nut501_cu <- glm(delta ~ SMOKNG_TYPSMK_Nut501, data=delta_tobacco, family=gaussian())
+
+print(summary(delta_SMOKNG_NUMCIG_Nut501_cu))
+print(summary(delta_SMOKNG_TYPSMK_Nut501_cu))
+
+### Plot Coefficients
+plot_tobacco_cu <- plot_models(delta_SMOKNG_NUMCIG_Nut501_cu,
+            delta_SMOKNG_TYPSMK_Nut501_cu,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Number of Cigarettes",
+                          "Active Smoker"),
+            title="Tobacco Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_tobacco_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_tobacco <- factor_data_cu_a_pos_vasc_neg[,c("delta", "SMOKNG_TYPSMK_Nut501",
+                                      "SMOKNG_NUMCIG_Nut501",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_tobacco$SMOKNG_NUMCIG_Nut501_std <- scale(delta_tobacco$SMOKNG_NUMCIG_Nut501)
+# SMOKNG_TYPSMK is 1 for non-smokers, 2,3 or 4 for former or current smokers.
+delta_tobacco$SMOKNG_TYPSMK_Nut501 <- ifelse(delta_tobacco$SMOKNG_TYPSMK_Nut501 == 1, 0, 1)
+
+delta_SMOKNG_NUMCIG_Nut501_cu_a_pos <- glm(delta ~ SMOKNG_NUMCIG_Nut501_std, data=delta_tobacco, family=gaussian())
+delta_SMOKNG_TYPSMK_Nut501_cu_a_pos <- glm(delta ~ SMOKNG_TYPSMK_Nut501, data=delta_tobacco, family=gaussian())
+
+print(summary(delta_SMOKNG_NUMCIG_Nut501_cu_a_pos))
+print(summary(delta_SMOKNG_TYPSMK_Nut501_cu_a_pos))
+
+### Plot Coefficients
+plot_tobacco_cu_a_pos <- plot_models(delta_SMOKNG_NUMCIG_Nut501_cu_a_pos,
+            delta_SMOKNG_TYPSMK_Nut501_cu_a_pos,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Number of Cigarettes",
+                          "Active Smoker"),
+            title="Tobacco Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_tobacco_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_tobacco <- factor_data_cu_a_neg_vasc_pos[,c("delta", "SMOKNG_TYPSMK_Nut501",
+                                      "SMOKNG_NUMCIG_Nut501",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_tobacco$SMOKNG_NUMCIG_Nut501_std <- scale(delta_tobacco$SMOKNG_NUMCIG_Nut501)
+# SMOKNG_TYPSMK is 1 for non-smokers, 2,3 or 4 for former or current smokers.
+delta_tobacco$SMOKNG_TYPSMK_Nut501 <- ifelse(delta_tobacco$SMOKNG_TYPSMK_Nut501 == 1, 0, 1)
+
+delta_SMOKNG_NUMCIG_Nut501_cu_v_pos <- glm(delta ~ SMOKNG_NUMCIG_Nut501_std, data=delta_tobacco, family=gaussian())
+delta_SMOKNG_TYPSMK_Nut501_cu_v_pos <- glm(delta ~ SMOKNG_TYPSMK_Nut501, data=delta_tobacco, family=gaussian())
+
+print(summary(delta_SMOKNG_NUMCIG_Nut501_cu_v_pos))
+print(summary(delta_SMOKNG_TYPSMK_Nut501_cu_v_pos))
+
+### Plot Coefficients
+plot_tobacco_cu_v_pos <- plot_models(delta_SMOKNG_NUMCIG_Nut501_cu_v_pos,
+            delta_SMOKNG_TYPSMK_Nut501_cu_v_pos,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Number of Cigarettes",
+                          "Active Smoker"),
+            title="Tobacco Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_tobacco_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/tobacco_cu.svg",
+       plot=plot_tobacco_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/tobacco_cu_a_pos.svg",
+       plot=plot_tobacco_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/tobacco_cu_v_pos.svg",
+       plot=plot_tobacco_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeaway
+No statistically significant associations found.
+
+
+## Alcohol
+
+### CU A- V-
+```{r}
+delta_alcohol <- factor_data_cu[,c("delta", "ALCOHL_TOTALS_Nut401",
+                                      "ALCH30_TOTALS_Nut401",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_alcohol$ALCOHL_TOTALS_Nut401_std <- scale(delta_alcohol$ALCOHL_TOTALS_Nut401)
+delta_alcohol$ALCH30_TOTALS_Nut401_std <- scale(delta_alcohol$ALCH30_TOTALS_Nut401)
+
+delta_ALCOHL_TOTALS_Nut401_std_cu <- glm(delta ~ ALCOHL_TOTALS_Nut401, data=delta_alcohol, family=gaussian())
+delta_ALCH30_TOTALS_Nut401_std_cu <- glm(delta ~ ALCH30_TOTALS_Nut401, data=delta_alcohol, family=gaussian())
+
+print(summary(delta_ALCOHL_TOTALS_Nut401_std_cu))
+print(summary(delta_ALCH30_TOTALS_Nut401_std_cu))
+
+### Plot Coefficients
+plot_alcohol_cu <- plot_models(delta_ALCOHL_TOTALS_Nut401_std_cu,
+            delta_ALCH30_TOTALS_Nut401_std_cu,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Daily Alcohol Units",
+                          "Weekly Alcohol Units"),
+            title="Alcohol Factors (CU A- V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_alcohol_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_alcohol <- factor_data_cu_a_pos_vasc_neg[,c("delta", "ALCOHL_TOTALS_Nut401",
+                                      "ALCH30_TOTALS_Nut401",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_alcohol$ALCOHL_TOTALS_Nut401_std <- scale(delta_alcohol$ALCOHL_TOTALS_Nut401)
+delta_alcohol$ALCH30_TOTALS_Nut401_std <- scale(delta_alcohol$ALCH30_TOTALS_Nut401)
+
+delta_ALCOHL_TOTALS_Nut401_std_cu_a_pos <- glm(delta ~ ALCOHL_TOTALS_Nut401, data=delta_alcohol, family=gaussian())
+delta_ALCH30_TOTALS_Nut401_std_cu_a_pos <- glm(delta ~ ALCH30_TOTALS_Nut401, data=delta_alcohol, family=gaussian())
+
+print(summary(delta_ALCOHL_TOTALS_Nut401_std_cu_a_pos))
+print(summary(delta_ALCH30_TOTALS_Nut401_std_cu_a_pos))
+
+### Plot Coefficients
+plot_alcohol_cu_a_pos <- plot_models(delta_ALCOHL_TOTALS_Nut401_std_cu_a_pos,
+            delta_ALCH30_TOTALS_Nut401_std_cu_a_pos,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Daily Alcohol Units",
+                          "Weekly Alcohol Units"),
+            title="Alcohol Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_alcohol_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_alcohol <- factor_data_cu_a_neg_vasc_pos[,c("delta", "ALCOHL_TOTALS_Nut401",
+                                      "ALCH30_TOTALS_Nut401",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_alcohol$ALCOHL_TOTALS_Nut401_std <- scale(delta_alcohol$ALCOHL_TOTALS_Nut401)
+delta_alcohol$ALCH30_TOTALS_Nut401_std <- scale(delta_alcohol$ALCH30_TOTALS_Nut401)
+
+delta_ALCOHL_TOTALS_Nut401_std_cu_v_pos <- glm(delta ~ ALCOHL_TOTALS_Nut401, data=delta_alcohol, family=gaussian())
+delta_ALCH30_TOTALS_Nut401_std_cu_v_pos <- glm(delta ~ ALCH30_TOTALS_Nut401, data=delta_alcohol, family=gaussian())
+
+print(summary(delta_ALCOHL_TOTALS_Nut401_std_cu_v_pos))
+print(summary(delta_ALCH30_TOTALS_Nut401_std_cu_v_pos))
+
+### Plot Coefficients
+plot_alcohol_cu_v_pos <- plot_models(delta_ALCOHL_TOTALS_Nut401_std_cu_v_pos,
+            delta_ALCH30_TOTALS_Nut401_std_cu_v_pos,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Daily Alcohol Units",
+                          "Weekly Alcohol Units"),
+            title="Alcohol Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_alcohol_cu_v_pos)
+```
+```{r}
+ggsave("../paper/plots/forest_plots/alcohol_cu.svg",
+       plot=plot_alcohol_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/alcohol_cu_a_pos.svg",
+       plot=plot_alcohol_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/alcohol_cu_v_pos.svg",
+       plot=plot_alcohol_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeaway
+No significant associations found.
+
+## Diet
+
+### CU A- V-
+```{r}
+delta_diet <- factor_data_cu[,c("delta", "MDAS13_NA13SC_Nut151",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_diet$MDAS13_NA13SC_Nut151_std <- scale(delta_diet$MDAS13_NA13SC_Nut151)
+
+delta_MDAS13_NA13SC_Nut151_std_cu <- glm(delta ~ MDAS13_NA13SC_Nut151_std, data=delta_diet, family=gaussian())
+
+print(summary(delta_MDAS13_NA13SC_Nut151_std_cu))
+
+### Plot Coefficients
+plot_diet_cu <- plot_models(delta_MDAS13_NA13SC_Nut151_std_cu,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Mediterranean Diet Adherence"),
+            title="Diet Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_diet_cu)
+```
+
+### CU A+ V-
+```{r}
+delta_diet <- factor_data_cu_a_pos_vasc_neg[,c("delta", "MDAS13_NA13SC_Nut151",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_diet$MDAS13_NA13SC_Nut151_std <- scale(delta_diet$MDAS13_NA13SC_Nut151)
+
+delta_MDAS13_NA13SC_Nut151_std <- glm(delta ~ MDAS13_NA13SC_Nut151_std, data=delta_diet, family=gaussian())
+
+print(summary(delta_MDAS13_NA13SC_Nut151_std))
+
+### Plot Coefficients
+plot_diet_cu_a_pos <- plot_models(delta_MDAS13_NA13SC_Nut151_std,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Mediterranean Diet Adherence"),
+            title="Diet Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_diet_cu_a_pos)
+```
+
+### CU A- V+
+```{r}
+delta_diet <- factor_data_cu_a_neg_vasc_pos[,c("delta", "MDAS13_NA13SC_Nut151",
+                                      "sex", "educ_years_std",
+                                      "P1_APOE4_load_std")]
+
+delta_diet$MDAS13_NA13SC_Nut151_std <- scale(delta_diet$MDAS13_NA13SC_Nut151)
+
+delta_MDAS13_NA13SC_Nut151_std <- glm(delta ~ MDAS13_NA13SC_Nut151_std, data=delta_diet, family=gaussian())
+
+print(summary(delta_MDAS13_NA13SC_Nut151_std))
+
+### Plot Coefficients
+plot_diet_cu_v_pos <- plot_models(delta_MDAS13_NA13SC_Nut151_std,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c("Mediterranean Diet Adherence"),
+            title="Diet Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_diet_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/diet_cu.svg",
+       plot=plot_diet_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/diet_cu_a_pos.svg",
+       plot=plot_diet_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/diet_cu_v_pos.svg",
+       plot=plot_diet_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeaway
+No significant associations found.
+
+
+## IPAQ & Sitting
+
+### CU A- V-
+```{r}
+delta_ipaq_sitting <- factor_data_cu[,c("delta", "P1_IPAQMH_PATOTL_Nut701",
+                                "SDNTMF_CMPUTR_Nut801",
+                                "SDNTMF_DRIVNG_Nut801",
+                                "SDNTSS_CMPUTR_Nut801",
+                                "SDNTSS_DRIVNG_Nut801",
+                                "SDNTTT_SITTOT_Nut801",
+                                "sex", "educ_years_std",
+                                "P1_APOE4_load_std")]
+
+delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701_std <- scale(delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701)
+delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTTT_SITTOT_Nut801_std <- scale(delta_ipaq_sitting$SDNTTT_SITTOT_Nut801)
+
+delta_P1_IPAQMH_PATOTL_Nut701_std <- glm(delta ~ P1_IPAQMH_PATOTL_Nut701_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_CMPUTR_Nut801_std <- glm(delta ~ SDNTMF_CMPUTR_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_DRIVNG_Nut801_std <- glm(delta ~ SDNTMF_DRIVNG_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_CMPUTR_Nut801_std <- glm(delta ~ SDNTSS_CMPUTR_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_DRIVNG_Nut801_std <- glm(delta ~ SDNTSS_DRIVNG_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTTT_SITTOT_Nut801_std <- glm(delta ~ SDNTTT_SITTOT_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+
+print(summary(delta_P1_IPAQMH_PATOTL_Nut701_std))
+print(summary(delta_SDNTMF_CMPUTR_Nut801_std))
+print(summary(delta_SDNTMF_DRIVNG_Nut801_std))
+print(summary(delta_SDNTSS_CMPUTR_Nut801_std))
+print(summary(delta_SDNTSS_DRIVNG_Nut801_std))
+print(summary(delta_SDNTTT_SITTOT_Nut801_std))
+
+### Plot Coefficients
+plot_ipaq_cu <- plot_models(delta_P1_IPAQMH_PATOTL_Nut701_std,
+                            delta_SDNTMF_CMPUTR_Nut801_std,
+                            delta_SDNTMF_DRIVNG_Nut801_std,
+                            delta_SDNTSS_CMPUTR_Nut801_std,
+                            delta_SDNTSS_DRIVNG_Nut801_std,
+                            delta_SDNTTT_SITTOT_Nut801_std,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Weekly Sitting Hours",
+              "Weekly Driving Hours",
+              "Weekly Computer Hours",
+              "Daily Driving Hours",
+              "Daily Computer Hours",
+              "IPAQ total"
+                          ),
+            title="Sedentarism Factors (CU A-V-)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_ipaq_cu)
+
+```
+
+### CU A+ V-
+```{r}
+delta_ipaq_sitting <- factor_data_cu_a_pos_vasc_neg[,c("delta", "P1_IPAQMH_PATOTL_Nut701",
+                                "SDNTMF_CMPUTR_Nut801",
+                                "SDNTMF_DRIVNG_Nut801",
+                                "SDNTSS_CMPUTR_Nut801",
+                                "SDNTSS_DRIVNG_Nut801",
+                                "SDNTTT_SITTOT_Nut801",
+                                "sex", "educ_years_std",
+                                "P1_APOE4_load_std")]
+
+delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701_std <- scale(delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701)
+delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTTT_SITTOT_Nut801_std <- scale(delta_ipaq_sitting$SDNTTT_SITTOT_Nut801)
+
+delta_P1_IPAQMH_PATOTL_Nut701_std <- glm(delta ~ P1_IPAQMH_PATOTL_Nut701_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_CMPUTR_Nut801_std <- glm(delta ~ SDNTMF_CMPUTR_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_DRIVNG_Nut801_std <- glm(delta ~ SDNTMF_DRIVNG_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_CMPUTR_Nut801_std <- glm(delta ~ SDNTSS_CMPUTR_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_DRIVNG_Nut801_std <- glm(delta ~ SDNTSS_DRIVNG_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTTT_SITTOT_Nut801_std <- glm(delta ~ SDNTTT_SITTOT_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+
+print(summary(delta_P1_IPAQMH_PATOTL_Nut701_std))
+print(summary(delta_SDNTMF_CMPUTR_Nut801_std))
+print(summary(delta_SDNTMF_DRIVNG_Nut801_std))
+print(summary(delta_SDNTSS_CMPUTR_Nut801_std))
+print(summary(delta_SDNTSS_DRIVNG_Nut801_std))
+print(summary(delta_SDNTTT_SITTOT_Nut801_std))
+
+### Plot Coefficients
+plot_ipaq_cu_a_pos <- plot_models(delta_P1_IPAQMH_PATOTL_Nut701_std,
+                            delta_SDNTMF_CMPUTR_Nut801_std,
+                            delta_SDNTMF_DRIVNG_Nut801_std,
+                            delta_SDNTSS_CMPUTR_Nut801_std,
+                            delta_SDNTSS_DRIVNG_Nut801_std,
+                            delta_SDNTTT_SITTOT_Nut801_std,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Weekly Sitting Hours",
+              "Weekly Driving Hours",
+              "Weekly Computer Hours",
+              "Daily Driving Hours",
+              "Daily Computer Hours",
+              "IPAQ total"
+                          ),
+            title="Sedentarism Factors (CU A+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_ipaq_cu_a_pos)
+```
+
+### CU A+ V-: correcting for sex, educ_years, and APOE4_load
+```{r}
+delta_ipaq_sitting <- factor_data_cu_a_pos_vasc_neg[,c("delta", "P1_IPAQMH_PATOTL_Nut701",
+                                "SDNTMF_CMPUTR_Nut801",
+                                "SDNTMF_DRIVNG_Nut801",
+                                "SDNTSS_CMPUTR_Nut801",
+                                "SDNTSS_DRIVNG_Nut801",
+                                "SDNTTT_SITTOT_Nut801",
+                                "sex", "educ_years_std",
+                                "P1_APOE4_load_std")]
+
+delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701_std <- scale(delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701)
+delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTTT_SITTOT_Nut801_std <- scale(delta_ipaq_sitting$SDNTTT_SITTOT_Nut801)
+
+delta_P1_IPAQMH_PATOTL_Nut701_std <- glm(delta ~ P1_IPAQMH_PATOTL_Nut701_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_CMPUTR_Nut801_std <- glm(delta ~ SDNTMF_CMPUTR_Nut801_std + sex + educ_years_std + P1_APOE4_load_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_DRIVNG_Nut801_std <- glm(delta ~ SDNTMF_DRIVNG_Nut801_std + sex + educ_years_std + P1_APOE4_load_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_CMPUTR_Nut801_std <- glm(delta ~ SDNTSS_CMPUTR_Nut801_std + sex + educ_years_std + P1_APOE4_load_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_DRIVNG_Nut801_std <- glm(delta ~ SDNTSS_DRIVNG_Nut801_std + sex + educ_years_std + P1_APOE4_load_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTTT_SITTOT_Nut801_std <- glm(delta ~ SDNTTT_SITTOT_Nut801_std + sex + educ_years_std + P1_APOE4_load_std, data=delta_ipaq_sitting, family=gaussian())
+
+print(summary(delta_P1_IPAQMH_PATOTL_Nut701_std))
+print(summary(delta_SDNTMF_CMPUTR_Nut801_std))
+print(summary(delta_SDNTMF_DRIVNG_Nut801_std))
+print(summary(delta_SDNTSS_CMPUTR_Nut801_std))
+print(summary(delta_SDNTSS_DRIVNG_Nut801_std))
+print(summary(delta_SDNTTT_SITTOT_Nut801_std))
+
+### Plot Coefficients
+plot_ipaq_cu_a_pos <- plot_models(delta_P1_IPAQMH_PATOTL_Nut701_std,
+                            delta_SDNTMF_CMPUTR_Nut801_std,
+                            delta_SDNTMF_DRIVNG_Nut801_std,
+                            delta_SDNTSS_CMPUTR_Nut801_std,
+                            delta_SDNTSS_DRIVNG_Nut801_std,
+                            delta_SDNTTT_SITTOT_Nut801_std,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Weekly Sitting Hours",
+              "Weekly Driving Hours",
+              "Weekly Computer Hours",
+              "Daily Driving Hours",
+              "Daily Computer Hours",
+              "IPAQ total"
+                          ),
+            title="Sedentarism Factors (CU A+), covariate corrected"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_ipaq_cu_a_pos)
+
+p <- c(summary(delta_P1_IPAQMH_PATOTL_Nut701_std)$coefficients[2,4],
+       summary(delta_SDNTMF_CMPUTR_Nut801_std)$coefficients[2,4],
+       summary(delta_SDNTMF_DRIVNG_Nut801_std)$coefficients[2,4],
+       summary(delta_SDNTSS_CMPUTR_Nut801_std)$coefficients[2,4],
+       summary(delta_SDNTSS_DRIVNG_Nut801_std)$coefficients[2,4],
+       summary(delta_SDNTTT_SITTOT_Nut801_std)$coefficients[2,4])
+print(p.adjust(p, method="fdr") < 0.05)
+print(p.adjust(p, method="fdr"))
+```
+
+### CU A- V+
+```{r}
+delta_ipaq_sitting <- factor_data_cu_a_neg_vasc_pos[,c("delta", "P1_IPAQMH_PATOTL_Nut701",
+                                "SDNTMF_CMPUTR_Nut801",
+                                "SDNTMF_DRIVNG_Nut801",
+                                "SDNTSS_CMPUTR_Nut801",
+                                "SDNTSS_DRIVNG_Nut801",
+                                "SDNTTT_SITTOT_Nut801",
+                                "sex", "educ_years_std",
+                                "P1_APOE4_load_std")]
+
+delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701_std <- scale(delta_ipaq_sitting$P1_IPAQMH_PATOTL_Nut701)
+delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTMF_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_CMPUTR_Nut801)
+delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801_std <- scale(delta_ipaq_sitting$SDNTSS_DRIVNG_Nut801)
+delta_ipaq_sitting$SDNTTT_SITTOT_Nut801_std <- scale(delta_ipaq_sitting$SDNTTT_SITTOT_Nut801)
+
+delta_P1_IPAQMH_PATOTL_Nut701_std <- glm(delta ~ P1_IPAQMH_PATOTL_Nut701_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_CMPUTR_Nut801_std <- glm(delta ~ SDNTMF_CMPUTR_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTMF_DRIVNG_Nut801_std <- glm(delta ~ SDNTMF_DRIVNG_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_CMPUTR_Nut801_std <- glm(delta ~ SDNTSS_CMPUTR_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTSS_DRIVNG_Nut801_std <- glm(delta ~ SDNTSS_DRIVNG_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+delta_SDNTTT_SITTOT_Nut801_std <- glm(delta ~ SDNTTT_SITTOT_Nut801_std, data=delta_ipaq_sitting, family=gaussian())
+
+print(summary(delta_P1_IPAQMH_PATOTL_Nut701_std))
+print(summary(delta_SDNTMF_CMPUTR_Nut801_std))
+print(summary(delta_SDNTMF_DRIVNG_Nut801_std))
+print(summary(delta_SDNTSS_CMPUTR_Nut801_std))
+print(summary(delta_SDNTSS_DRIVNG_Nut801_std))
+print(summary(delta_SDNTTT_SITTOT_Nut801_std))
+
+### Plot Coefficients
+plot_ipaq_cu_v_pos <- plot_models(delta_P1_IPAQMH_PATOTL_Nut701_std,
+                            delta_SDNTMF_CMPUTR_Nut801_std,
+                            delta_SDNTMF_DRIVNG_Nut801_std,
+                            delta_SDNTSS_CMPUTR_Nut801_std,
+                            delta_SDNTSS_DRIVNG_Nut801_std,
+                            delta_SDNTTT_SITTOT_Nut801_std,
+            
+            rm.terms=c("sex", "educ_years_std", "P1_APOE4_load_std"),
+            grid=FALSE,
+            show.values=TRUE,
+            show.p=FALSE,
+            show.legend=FALSE,
+            colors="blue",
+            axis.labels=c(
+              "Weekly Sitting Hours",
+              "Weekly Driving Hours",
+              "Weekly Computer Hours",
+              "Daily Driving Hours",
+              "Daily Computer Hours",
+              "IPAQ total"
+                          ),
+            title="Sedentarism Factors (CU V+)"
+            ) + labs(y="Standardized Estimated Beta Coefficients",
+                     x="Factor Name") + graph_th
+print(plot_ipaq_cu_v_pos)
+```
+
+```{r}
+ggsave("../paper/plots/forest_plots/ipaq_cu.svg",
+       plot=plot_ipaq_cu,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/ipaq_cu_a_pos.svg",
+       plot=plot_ipaq_cu_a_pos,
+       dpi=600,
+       width=7,
+       height=4)
+ggsave("../paper/plots/forest_plots/ipaq_cu_v_pos.svg",
+       plot=plot_ipaq_cu_v_pos,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+
+### Takeaway
+Significant negative association between sedentarism score and CAD in CU A+ V- group. Interpretation is not intuitive a priori "the more hours you sit, the less CAD you have (less cognitive aging)". However, we see consistent associations with education years and CAD in the sense of "more education years means less cognitive aging", and perhaps the sitting hours are employed in cognitively stimulating tasks for those who sit more.
+
+Negative statistically significant effect of sitting hours in front of computer on delta in CU A+ V- group, even after correcting for sex, education years, and APOE4 load. "The more you sit in front of the computer from Monday to Friday, the less cognitive aging you have."
+
+Do those who sit more in front of the computer from Monday to Friday also have more education years?
+
+## Relationship between education years and sitting hours in front of the computer from Monday to Friday
+
+### CU A- V-
+```{r}
+education_sedentarism_cu <- regression_analysis(factor_data_cu,
+                                            "SDNTMF_CMPUTR_Nut801",
+                                            "educ_years",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+education_sedentarism_cu$scatter_plot
+```
+
+### CU A+ V-
+```{r}
+education_sedentarism_cu_a_pos_vasc_neg <- regression_analysis(factor_data_cu_a_pos_vasc_neg,
+                                            "SDNTMF_CMPUTR_Nut801",
+                                            "educ_years",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+education_sedentarism_cu_a_pos_vasc_neg$scatter_plot
+```
+
+### CU A+ V-
+```{r}
+education_sedentarism_cu_a_neg_vasc_pos <- regression_analysis(factor_data_cu_a_neg_vasc_pos,
+                                            "SDNTMF_CMPUTR_Nut801",
+                                            "educ_years",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+education_sedentarism_cu_a_neg_vasc_pos$scatter_plot
+```
+
+### All groups
+```{r}
+education_sedentarism_all <- regression_analysis(factor_data,
+                                            "SDNTMF_CMPUTR_Nut801",
+                                            "educ_years",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+education_sedentarism_all$scatter_plot
+```
+
+## CSF signal association with CAD
+
+### CSF signals in the whole group.
+```{r}
+csf_signals <- data[,c("delta", "cmp_code", "P1_SIGCSF_AB42X_lab106",
+                       "P1_SIGCSF_TAUXXX_lab106", "P1_SIGCSF_PTAUXX_lab106",
+                       "sex", "P1_APOE4_load_std")]
+
+# Divide the P1_SIGCSF_AB42X_lab106 column by P1_SIGCSF_PTAUXX_lab106 and store it as P1_SIGCSF_AB42_DIV_PTAU_lab106
+csf_signals$P1_SIGCSF_AB42_DIV_PTAU_lab106 <- csf_signals$P1_SIGCSF_AB42X_lab106 / csf_signals$P1_SIGCSF_PTAUXX_lab106
+
+# Scatter plot of delta and Amyloid
+
+csf_amyloid_analysis <- regression_analysis(csf_signals,
+                                            "P1_SIGCSF_AB42_DIV_PTAU_lab106",
+                                            "delta",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+csf_amyloid_analysis$scatter_plot
+
+csf_tau_analysis <- regression_analysis(csf_signals,
+                                        "P1_SIGCSF_TAUXXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_tau_analysis$scatter_plot
+
+
+csf_ptau_analysis <- regression_analysis(csf_signals,
+                                        "P1_SIGCSF_PTAUXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_ptau_analysis$scatter_plot
+
+# Save the three plots
+ggsave("../paper/plots/scatter_plots/csf_amyloid_div_tau_vs_delta_cu-.svg",
+       plot=csf_amyloid_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+
+ggsave("../paper/plots/scatter_plots/csf_amyloid_tau_vs_delta_cu-.svg",
+       plot=csf_tau_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+
+ggsave("../paper/plots/scatter_plots/csf_amyloid_ptau_vs_delta_cu-.svg",
+       plot=csf_ptau_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+            
+```
+
+### CSF signals in the CU A- V- group
+```{r}
+csf_signals_cu <- csf_signals[csf_signals$cmp_code %in% cmp_codes_cu, ]
+# Scatter plot of delta and Amyloid
+
+csf_amyloid_analysis <- regression_analysis(csf_signals_cu,
+                                            "P1_SIGCSF_AB42_DIV_PTAU_lab106",
+                                            "delta",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+csf_amyloid_analysis$scatter_plot
+
+csf_tau_analysis <- regression_analysis(csf_signals_cu,
+                                        "P1_SIGCSF_TAUXXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_tau_analysis$scatter_plot
+
+
+csf_ptau_analysis <- regression_analysis(csf_signals_cu,
+                                        "P1_SIGCSF_PTAUXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_ptau_analysis$scatter_plot
+
+# Save the three plots
+ggsave("../paper/plots/scatter_plots/csf_amyloid_div_tau_vs_delta_cu_a+.svg",
+       plot=csf_amyloid_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+
+ggsave("../paper/plots/scatter_plots/csf_amyloid_tau_vs_delta_cu_a+.svg",
+       plot=csf_tau_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+
+ggsave("../paper/plots/scatter_plots/csf_amyloid_ptau_vs_delta_cu_a+.svg",
+       plot=csf_ptau_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+            
+```
+
+### CSF signals in the CU A+ V- group
+```{r}
+csf_signals_cu_a_pos_vasc_neg <- csf_signals[csf_signals$cmp_code %in% cmp_codes_cu_a_pos_vasc_neg, ]
+# Scatter plot of delta and Amyloid
+
+csf_amyloid_analysis <- regression_analysis(csf_signals_cu_a_pos_vasc_neg,
+                                            "P1_SIGCSF_AB42_DIV_PTAU_lab106",
+                                            "delta",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+csf_amyloid_analysis$scatter_plot
+
+csf_tau_analysis <- regression_analysis(csf_signals_cu_a_pos_vasc_neg,
+                                        "P1_SIGCSF_TAUXXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_tau_analysis$scatter_plot
+
+
+csf_ptau_analysis <- regression_analysis(csf_signals_cu_a_pos_vasc_neg,
+                                        "P1_SIGCSF_PTAUXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_ptau_analysis$scatter_plot
+
+# Save the three plots
+ggsave("../paper/plots/scatter_plots/csf_amyloid_div_tau_vs_delta_cu_v+.svg",
+       plot=csf_amyloid_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+
+ggsave("../paper/plots/scatter_plots/csf_amyloid_tau_vs_delta_cu_v+.svg",
+       plot=csf_tau_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+
+ggsave("../paper/plots/scatter_plots/csf_amyloid_ptau_vs_delta_cu_v+.svg",
+       plot=csf_ptau_analysis$scatter_plot,
+       dpi=600,
+       width=7,
+       height=4)
+```
+
+### CSF signals in the CU A- V+ group
+```{r}
+csf_signals_cu_a_neg_vasc_pos <- csf_signals[csf_signals$cmp_code %in% cmp_codes_cu_a_neg_vasc_pos, ]
+# Scatter plot of delta and Amyloid
+
+csf_amyloid_analysis <- regression_analysis(csf_signals_cu_a_neg_vasc_pos,
+                                            "P1_SIGCSF_AB42_DIV_PTAU_lab106",
+                                            "delta",
+                                            c("sex", "P1_APOE4_load_std")
+                                            )
+csf_amyloid_analysis$scatter_plot
+
+csf_tau_analysis <- regression_analysis(csf_signals_cu_a_neg_vasc_pos,
+                                        "P1_SIGCSF_TAUXXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_tau_analysis$scatter_plot
+
+
+csf_ptau_analysis <- regression_analysis(csf_signals_cu_a_neg_vasc_pos,
+                                        "P1_SIGCSF_PTAUXX_lab106",
+                                        "delta",
+                                        c("sex", "P1_APOE4_load_std")
+                                        )
+csf_ptau_analysis$scatter_plot
+            
+```
+### Comparison of participants with CSF and no CSF
+```{r}
+educ_years <- read_excel("../data/Excel/PGA1_Cognición_RAW SCORE_18.11.2024.xlsx")[,c("cmp_code", "Educ_years")]
+apoe_4 <- read_excel("../data/Excel/Datos_Cognicion_PGA.xlsx")[, c("cmp_code", "APOE4_carrier")]
+
+data_everyone <- diagnosis %>%
+  merge(csf_data, by="cmp_code") %>%
+  merge(educ_years, by="cmp_code") %>%
+  merge(apoe_4, by="cmp_code")
+
+data_everyone[data_everyone==9999] <- NA
+data_everyone[data_everyone==999] <- NA
+
+data_csf <- data_everyone %>%
+  filter(LCR == 1)
+
+data_no_csf <- data_everyone %>%
+  filter(LCR == 0)
+
+# Compare Age
+wilcox.test(data_csf$Age, data_no_csf$Age)
+
+# Compare sex distribution
+t(matrix(data=c(table(data_csf$Sex), table(data_no_csf$Sex)),
+       nrow=2)) %>%
+  chisq.test()
+
+# Compare education years
+wilcox.test(data_csf$Educ_years, data_no_csf$Educ_years)
+
+# Compare APOE4 carriership
+t(matrix(data=c(table(data_csf$APOE4_carrier), table(data_no_csf$APOE4_carrier)),
+       nrow=2)) %>%
+  chisq.test()
+```
+
+
+```{r}
+summary_csf <- data_csf[,c("Age", "Educ_years", "Sex", "APOE4_carrier")]
+
+summary_no_csf <- data_no_csf[,c("Age", "Educ_years", "Sex", "APOE4_carrier")]
+```
+
+
+## Ideas
+After correcting for years of education, all possible associations are thrown off. The factor that is most associated with years of education, vocabulary, is also most associated with CADs, suggesting that our cognitive age delta captures this information, more intensely than any other cognitive domains.
+
+The association of sedentarism and CADs in CU A+ V- could (perhaps?) be explained as noted above, stating that the sitting time is cognitively stimulating/meaningful. However this does not hold for the CU A- V- groups, what makes it more difficult to justify.
+
+Also, it must be noted that our sample size is very reduced in all clinical groups, which makes drawing conclusions very challenging and a thing to do with utmost caution. Studies using this methodology typically use bigger sample sizes accross all their clinical groups, and particularly in the reference group (CU A- V- in our case).
+
+
+
+
+
+
+
+
+

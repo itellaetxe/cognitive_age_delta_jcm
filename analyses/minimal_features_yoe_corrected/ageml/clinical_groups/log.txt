@@ -1,0 +1,53 @@
+2025-10-01 08:56:18
+-----------------------------------
+Loading data...
+Number of subjects in dataframe clinical: 179
+Number of subjects in dataframe ages: 177
+Removing subjects with missing data...
+Removing subjects not shared among dataframes...
+2 subjects removed from clinical dataframe.
+Final number of subjects in dataframe clinical: 177 (98.88 % of initial)
+Final number of subjects in dataframe ages: 177 (100.00 % of initial)
+Number of cn subjects: 140
+Number of cu_amyloid_neg_vasc_pos subjects: 14
+Number of cu_amyloid_pos_vasc_neg subjects: 23
+-----------------------------------
+Age distribution of Clinical Groups
+[Group: cn]
+Mean age: 55.77
+Std age: 6.35
+Age range: [39,76]
+[Group: cu_amyloid_neg_vasc_pos]
+Mean age: 61.36
+Std age: 7.14
+Age range: [46,73]
+[Group: cu_amyloid_pos_vasc_neg]
+Mean age: 60.78
+Std age: 8.20
+Age range: [46,78]
+Checking that age distributions are similar using T-test: T-stat (p_value)
+If p_value > 0.05 distributions are considered simiilar and not displayed...
+Age distributions cn and cu_amyloid_neg_vasc_pos are not similar: -3.08 (0.0024) 
+Age distributions cn and cu_amyloid_pos_vasc_neg are not similar: -3.33 (0.0011) 
+-----------------------------------
+Delta distribution for System: all
+[Group: cn]
+Mean delta: 0.08
+Std delta: 3.49
+Delta range: [-8, 10]
+[Group: cu_amyloid_neg_vasc_pos]
+Mean delta: 0.37
+Std delta: 2.24
+Delta range: [-3, 4]
+[Group: cu_amyloid_pos_vasc_neg]
+Mean delta: 0.33
+Std delta: 3.52
+Delta range: [-5, 7]
+Checking for statistically significant differences between deltas...
+===========================================================================================================================
+significance: 0.05 * -> FDR, ** -> bonferroni
+p-val (group1 vs. group2)            Cohen's d              CI (95%):   [low, upp]          Delta difference(mean1 - mean2)
+---------------------------------------------------------------------------------------------------------------------------
+p-val (cn vs. cu_amyloid_neg_vasc_pos): 0.76  Cohen's d: -0.09       CI (95.0%): [-1.73 , 1.14  ]    Delta difference: -0.30          
+p-val (cn vs. cu_amyloid_pos_vasc_neg): 0.74  Cohen's d: -0.07       CI (95.0%): [-1.91 , 1.39  ]    Delta difference: -0.26          
+p-val (cu_amyloid_neg_vasc_pos vs. cu_amyloid_pos_vasc_neg): 0.97  Cohen's d: 0.01        CI (95.0%): [-1.94 , 2.01  ]    Delta difference: 0.04           
