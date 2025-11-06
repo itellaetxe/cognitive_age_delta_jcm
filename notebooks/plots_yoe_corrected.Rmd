@@ -2691,15 +2691,3 @@ summary_no_csf <- data_no_csf[,c("Age", "Educ_years", "Sex", "APOE4_carrier")]
 ## Ideas
 After correcting for years of education, all possible associations are thrown off. The factor that is most associated with years of education, vocabulary, is also most associated with CADs, suggesting that our cognitive age delta captures this information, more intensely than any other cognitive domains.
 
-The association of sedentarism and CADs in CU A+ V- could (perhaps?) be explained as noted above, stating that the sitting time is cognitively stimulating/meaningful. However this does not hold for the CU A- V- groups, what makes it more difficult to justify.
-
-Also, it must be noted that our sample size is very reduced in all clinical groups, which makes drawing conclusions very challenging and a thing to do with utmost caution. Studies using this methodology typically use bigger sample sizes accross all their clinical groups, and particularly in the reference group (CU A- V- in our case).
-
-
-
-
-
-
-
-
-
