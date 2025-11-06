@@ -1,0 +1,15 @@
+
+Variable Name(Ordered by correlation with age),Standardized Coefficients,Original Scale Coefficients
+Intercept,55.77,96.25
+digsym_wais_pga1_yoe_corrected,-1.7630,-0.1156
+stroop_color_total_pga1_yoe_corrected,-0.8945,-0.0741
+stroop_wordcolor_total_pga1_yoe_corrected,-1.1618,-0.1138
+t15objv1_pga1_yoe_corrected,-0.6991,-0.4875
+rocf_rec30m_pga1_yoe_corrected,-1.3264,-0.2507
+tmta_time_pga1_yoe_corrected,0.1797,0.0172
+bskimm_tfrrsc_pga1_yoe_corrected,-0.6966,-0.1280
+tmtb_time_pga1_yoe_corrected,-0.9684,-0.0393
+bostonnaming_pga1_yoe_corrected,-0.1727,-0.0519
+pvf_p_pga1_yoe_corrected,-0.0218,-0.0046
+bskimm_ttlrsc_pga1_yoe_corrected,-0.2325,-0.0595
+svf_anim_pga1_yoe_corrected,0.0886,0.0150
